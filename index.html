@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>歌词卡片</title>
+<meta name="description" content="填入封面和歌词，生成一张分享用的歌词图片。所有处理都在本机完成。">
+<meta name="theme-color" content="#F7F9FF">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-title" content="歌词卡片">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="styles/app.css">
+<style id="dynTheme"></style>
+</head>
+<body>
+<noscript><p class="noscript">这个页面需要开启 JavaScript 才能使用。</p></noscript>
+
+<header class="appbar">
+  <span class="appbar-icon" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="20" height="20"><path d="M9 18V6l10-2v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="2.5" fill="currentColor"/><circle cx="16.5" cy="16" r="2.5" fill="currentColor"/></svg>
+  </span>
+  <h1>歌词卡片</h1>
+  <a class="icon-btn github-link" href="https://github.com/spacedge/lyric-card-generator" target="_blank" rel="noopener noreferrer" aria-label="在 GitHub 查看源码" title="GitHub 开源仓库">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
+  </a>
+  <button class="btn-text" id="resetBtn" type="button">重新开始</button>
+  <button class="btn" id="exportBtn" type="button">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span class="export-label-full">导出图片</span>
+    <span class="export-label-short" aria-hidden="true">导出</span>
+  </button>
+</header>
+
+<main class="layout">
+  <section class="preview-pane" id="pane" aria-label="预览">
+    <!-- 手机端进入「内容」编辑时折叠为紧凑条，把空间留给输入框 -->
+    <button type="button" class="mini-preview" id="miniPreviewBtn" aria-label="展开实时预览">
+      <canvas id="miniThumb" width="72" height="90" aria-hidden="true"></canvas>
+      <span class="mini-info">
+        <strong id="miniTitle">紧凑模板</strong>
+        <span class="mono" id="miniSize">1080 × 1620 px</span>
+      </span>
+      <span class="mini-pill">
+        <span>看预览</span>
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+    </button>
+
+    <div class="preview-stage" id="stage">
+      <canvas id="preview" aria-label="歌词卡片预览"></canvas>
+      <button type="button" class="stage-zoom-btn" id="zoomPreviewBtn" aria-pressed="false" aria-label="展开全屏预览">
+        <svg class="icon-expand" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <svg class="icon-collapse" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l6-6M10 14l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span id="zoomPreviewLabel">放大</span>
+      </button>
+    </div>
+
+    <div class="preview-footer">
+      <p class="statusline">
+        <span class="mono" id="statusSize"></span>
+        <span id="statusWarn"></span>
+        <span id="statusMsg" role="status" aria-live="polite"></span>
+      </p>
+      <div class="focus-bar" id="focusBar">
+        <span class="focus-hint" id="focusHint">点击图上句子可设为重点</span>
+        <button type="button" class="btn-text btn-compact" id="quickClearFocus" hidden>清除重点</button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel" id="editorPanel" aria-label="设置">
+    <!-- 桌面端常驻顶部；手机端对应底部导航的「模板」页 -->
+    <section class="card template-card" id="panel-template" aria-label="模板与比例">
+      <div class="row-block">
+        <h2 class="card-title">模板</h2>
+        <div class="tiles" id="tiles">
+          <button type="button" class="tile" data-t="compact"><canvas width="160" height="200" aria-hidden="true"></canvas><span>紧凑</span></button>
+          <button type="button" class="tile" data-t="classic"><canvas width="160" height="200" aria-hidden="true"></canvas><span>经典</span></button>
+          <button type="button" class="tile" data-t="immersive"><canvas width="160" height="200" aria-hidden="true"></canvas><span>沉浸</span></button>
+          <button type="button" class="tile" data-t="quiet"><canvas width="160" height="200" aria-hidden="true"></canvas><span>留白</span></button>
+        </div>
+      </div>
+      <div class="row-block">
+        <h3 class="label">图片比例</h3>
+        <div class="seg" role="group" aria-label="图片比例" id="ratioSeg">
+          <button type="button" data-v="auto">长图</button>
+          <button type="button" data-v="4:5">4:5</button>
+          <button type="button" data-v="9:16">9:16</button>
+          <button type="button" data-v="1:1">1:1</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 桌面端分类标签 -->
+    <div class="tabs" role="tablist" aria-label="设置分类" id="tabs">
+      <button type="button" role="tab" id="tab-content" aria-controls="panel-content" data-tab="content"><span>内容</span><i></i></button>
+      <button type="button" role="tab" id="tab-color" aria-controls="panel-color" data-tab="color"><span>配色</span><i></i></button>
+      <button type="button" role="tab" id="tab-type" aria-controls="panel-type" data-tab="type"><span>文字</span><i></i></button>
+      <button type="button" role="tab" id="tab-extra" aria-controls="panel-extra" data-tab="extra"><span>附加</span><i></i></button>
+    </div>
+
+    <!-- 内容 -->
+    <section class="card tabpanel" role="tabpanel" id="panel-content" aria-labelledby="tab-content">
+      <button type="button" class="cover-card" id="coverBtn">
+        <canvas id="coverThumb" width="144" height="144" aria-hidden="true"></canvas>
+        <span class="cover-card-body">
+          <strong>更换封面</strong>
+          <span class="helper">点此选图，或拖入 / 粘贴图片</span>
+        </span>
+        <span class="cover-card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20"><rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 17l5-5 4 4 3-3 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </span>
+      </button>
+
+      <div class="grid2">
+        <label class="field" for="fTitle"><span>歌名</span><input id="fTitle" autocomplete="off" maxlength="120" placeholder="输入歌名"></label>
+        <label class="field" for="fArtist"><span>歌手</span><input id="fArtist" autocomplete="off" maxlength="120" placeholder="输入歌手"></label>
+      </div>
+
+      <div class="field-wrap">
+        <div class="field-head">
+          <label class="label" for="fLyrics">歌词</label>
+          <div class="field-tools">
+            <button type="button" class="btn-text btn-compact" id="pasteLyricsBtn">粘贴替换</button>
+            <button type="button" class="btn-text btn-compact" id="clearLyricsBtn">清空</button>
+          </div>
+        </div>
+        <div class="field field-bare">
+          <textarea id="fLyrics" rows="7" spellcheck="false" placeholder="粘贴或输入歌词，LRC 时间轴会自动去掉"></textarea>
+        </div>
+        <span class="helper">从音乐软件复制的 LRC 歌词会自动去掉时间轴。</span>
+      </div>
+
+      <div class="row-block">
+        <h3 class="label">歌词排列</h3>
+        <div class="seg" role="group" aria-label="歌词排列方式" id="modeSeg">
+          <button type="button" data-v="bilingual">交替双语</button>
+          <button type="button" data-v="blocks">空行分段</button>
+          <button type="button" data-v="single">纯单语</button>
+        </div>
+        <span class="helper" id="modeHelp"></span>
+      </div>
+
+      <details class="focus-disclosure" id="focusDisclosure">
+        <summary class="focus-summary">
+          <span class="focus-summary-left">
+            <span class="focus-title">重点句（可选）</span>
+            <span class="focus-badge" id="focusBadge">未选</span>
+          </span>
+          <svg class="focus-chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </summary>
+        <div class="focus-body">
+          <div class="section-head">
+            <p class="helper">不选时每句同等显示，也可直接点预览图。</p>
+            <button type="button" class="btn-text btn-compact" id="pickClear" disabled>清除</button>
+          </div>
+          <div class="picklist" id="pickList" role="group" aria-label="选择重点句"></div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 配色 -->
+    <section class="card tabpanel" role="tabpanel" id="panel-color" aria-labelledby="tab-color" hidden>
+      <div class="row-block">
+        <h3 class="label">从封面取的颜色</h3>
+        <div class="swatches" id="swatches"></div>
+      </div>
+      <div class="row-block">
+        <h3 class="label">风格</h3>
+        <div class="seg" role="group" aria-label="风格" id="variantSeg">
+          <button type="button" data-v="content">忠实</button>
+          <button type="button" data-v="tonal">柔和</button>
+          <button type="button" data-v="vibrant">鲜明</button>
+          <button type="button" data-v="mono">单色</button>
+        </div>
+      </div>
+      <div class="row-block">
+        <h3 class="label">明暗</h3>
+        <div class="seg" role="group" aria-label="明暗" id="darkSeg">
+          <button type="button" data-v="light">浅色</button>
+          <button type="button" data-v="dark">深色</button>
+        </div>
+        <span class="helper" id="darkHelp" hidden>经典模板的背景直接用选中的颜色，没有明暗之分。</span>
+      </div>
+      <label class="row-block" for="fScrim" id="scrimRow">
+        <span class="label label-row"><span>背景遮罩</span><output id="scrimOut">50%</output></span>
+        <input type="range" id="fScrim" min="25" max="85" step="5">
+      </label>
+      <p class="helper">换封面会重新取色，页面自身配色也会同步跟随。</p>
+    </section>
+
+    <!-- 文字 -->
+    <section class="card tabpanel" role="tabpanel" id="panel-type" aria-labelledby="tab-type" hidden>
+      <div class="row-block">
+        <h3 class="label">字体</h3>
+        <div class="chips" id="fontChips">
+          <button type="button" class="chip" data-v="sans">黑体</button>
+          <button type="button" class="chip" data-v="serif">明朝</button>
+          <button type="button" class="chip" data-v="round">圆体</button>
+          <button type="button" class="chip" data-v="hand">手写</button>
+          <button type="button" class="chip" data-v="custom" id="customChip" hidden><span class="chip-label">导入的字体</span></button>
+          <button type="button" class="chip chip-add" id="fontBtn">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+            <span>导入字体</span>
+          </button>
+        </div>
+        <span class="helper" id="fontHelp">没联网时用系统自带字体。导入的字体仅保存在本机。</span>
+      </div>
+      <div class="row-block">
+        <div class="label label-row">
+          <label for="fScale">字号</label>
+          <button type="button" class="output-reset mono" id="scaleReset" title="点击恢复 100%"><output id="scaleOut">100%</output></button>
+        </div>
+        <input type="range" id="fScale" min="80" max="130" step="5">
+      </div>
+      <div class="row-block">
+        <h3 class="label">对齐</h3>
+        <div class="seg" role="group" aria-label="对齐" id="alignSeg">
+          <button type="button" data-v="left">左对齐</button>
+          <button type="button" data-v="center">居中</button>
+        </div>
+      </div>
+      <div class="switch-row">
+        <span>显示译文</span>
+        <button type="button" class="switch" role="switch" id="swTrans" aria-label="显示译文"><i></i></button>
+      </div>
+    </section>
+
+    <!-- 附加 -->
+    <section class="card tabpanel" role="tabpanel" id="panel-extra" aria-labelledby="tab-extra" hidden>
+      <p class="helper">图上默认只有封面、歌名、歌手和歌词，需要时再开启下面这些。</p>
+      <div class="extra" data-x="date">
+        <div class="switch-row">
+          <div class="switch-text"><span>日期</span><small>角落里的一行小字，可改成任意文字</small></div>
+          <button type="button" class="switch" role="switch" aria-label="日期"><i></i></button>
+        </div>
+        <label class="field field-sm" for="fDate"><span>印记文字</span><input id="fDate" autocomplete="off" maxlength="40"></label>
+      </div>
+      <div class="extra" data-x="note">
+        <div class="switch-row">
+          <div class="switch-text"><span>角落小字</span><small>只在留白模板里出现，放在左下角</small></div>
+          <button type="button" class="switch" role="switch" aria-label="角落小字"><i></i></button>
+        </div>
+        <label class="field field-sm" for="fNote"><span>小字内容</span><input id="fNote" autocomplete="off" maxlength="60" placeholder="比如：ここはまだ夏。"></label>
+      </div>
+      <div class="extra" data-x="progress">
+        <div class="switch-row">
+          <div class="switch-text"><span>进度条</span><small>标出这句在歌里的位置</small></div>
+          <button type="button" class="switch" role="switch" aria-label="进度条"><i></i></button>
+        </div>
+        <div class="grid2">
+          <label class="field field-sm" for="fCur"><span>当前</span><input id="fCur" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="01:52"></label>
+          <label class="field field-sm" for="fDur"><span>总长</span><input id="fDur" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="04:05"></label>
+        </div>
+      </div>
+      <div class="extra" data-x="qr">
+        <div class="switch-row">
+          <div class="switch-text"><span>二维码</span><small>填了链接才会出现，紧凑和经典模板可用</small></div>
+          <button type="button" class="switch" role="switch" aria-label="二维码"><i></i></button>
+        </div>
+        <label class="field field-sm" for="fLink"><span>歌曲链接</span><input id="fLink" inputmode="url" autocomplete="off" maxlength="500" placeholder="粘贴歌曲的分享链接"></label>
+        <label class="field field-sm" for="fSource"><span>来源（可空）</span><input id="fSource" autocomplete="off" maxlength="40" placeholder="比如：网易云音乐"></label>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<!-- 手机端底部导航栏（Material 3 Navigation Bar） -->
+<nav class="bottom-nav" id="mobileNav" role="tablist" aria-label="编辑切换">
+  <button type="button" role="tab" data-mtab="content" aria-selected="true">
+    <span class="nav-pill" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 7h14M5 12h14M5 17h9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </span>
+    <span>内容</span>
+  </button>
+  <button type="button" role="tab" data-mtab="template" aria-selected="false">
+    <span class="nav-pill" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20"><rect x="3.5" y="4" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="4" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+    </span>
+    <span>模板</span>
+  </button>
+  <button type="button" role="tab" data-mtab="color" aria-selected="false">
+    <span class="nav-pill" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9.5" cy="10" r="1.2" fill="currentColor"/><circle cx="14.5" cy="10" r="1.2" fill="currentColor"/><circle cx="12" cy="14.5" r="1.2" fill="currentColor"/></svg>
+    </span>
+    <span>配色</span>
+  </button>
+  <button type="button" role="tab" data-mtab="type" aria-selected="false">
+    <span class="nav-pill" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 6h14M12 6v13M8.5 19h7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </span>
+    <span>文字</span>
+  </button>
+  <button type="button" role="tab" data-mtab="extra" aria-selected="false">
+    <span class="nav-pill" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 8h16M4 16h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="9" cy="8" r="2.2" fill="var(--surface-low)" stroke="currentColor" stroke-width="1.8"/><circle cx="15" cy="16" r="2.2" fill="var(--surface-low)" stroke="currentColor" stroke-width="1.8"/></svg>
+    </span>
+    <span>附加</span>
+  </button>
+</nav>
+
+<div class="scrim" id="exportDlg" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="exportTitle" tabindex="-1">
+    <header class="dialog-head">
+      <button type="button" class="icon-btn" id="exportClose" aria-label="关闭">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <h2 id="exportTitle">导出图片</h2>
+    </header>
+    <div class="export-stage"><img id="exportImg" alt="生成的歌词图片"></div>
+    <div class="export-meta"><span>长按图片也能直接保存</span><span id="exportInfo" class="mono"></span></div>
+    <div class="seg" role="group" aria-label="清晰度" id="qualitySeg">
+      <button type="button" data-v="2">标准 1080 宽</button>
+      <button type="button" data-v="4">高清 2160 宽</button>
+    </div>
+    <div class="export-actions">
+      <button type="button" class="btn btn-lg" id="saveBtn">保存图片</button>
+      <div class="grid2">
+        <button type="button" class="btn-tonal btn-lg" id="shareBtn" hidden>分享</button>
+        <button type="button" class="btn-outlined btn-lg" id="copyBtn" hidden>复制图片</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="snackbar" id="snack" role="status" aria-live="polite"></div>
+<input type="file" id="coverInput" accept="image/*" hidden>
+<input type="file" id="fontInput" accept=".ttf,.otf,.woff,.woff2" hidden>
+
+<script src="vendor/qrcode.js"></script>
+<script type="module" src="src/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>歌词卡片</title>
+  <clipPath id="r"><rect width="512" height="512" rx="112.64"/></clipPath>
+  <g clip-path="url(#r)">
+    <rect width="512" height="512" fill="#23389C"/>
+    <circle cx="327.68" cy="184.32" r="66.56" fill="#EEF1FA"/>
+    <rect y="368.64" width="512" height="7.68" fill="#5DAEE6"/>
+    <rect y="376.32" width="512" height="135.68" fill="#1B2E86"/>
+  </g>
+</svg>
