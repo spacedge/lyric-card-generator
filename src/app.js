@@ -547,6 +547,47 @@ function removeUserFont() {
 }
 
 /* ====================================================================
+ * 二维码库按需加载
+ * ==================================================================== */
+
+let qrLoadPromise = null;
+
+function ensureQrLib() {
+  if (typeof globalThis.qrcode === 'function') return Promise.resolve(true);
+  if (qrLoadPromise) return qrLoadPromise;
+  const src = new URL('../vendor/qrcode.js', import.meta.url).href;
+  qrLoadPromise = new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = () => {
+      const ok = typeof globalThis.qrcode === 'function';
+      if (!ok) qrLoadPromise = null;
+      resolve(ok);
+    };
+    s.onerror = () => {
+      s.remove();
+      qrLoadPromise = null;
+      resolve(false);
+    };
+    document.head.appendChild(s);
+  });
+  return qrLoadPromise;
+}
+
+function loadQrAndRender({ warnOffline = false } = {}) {
+  if (typeof globalThis.qrcode === 'function') return;
+  ensureQrLib().then((ok) => {
+    if (ok) {
+      requestRender();
+      scheduleThumbs();
+    } else if (warnOffline && state.extras.qr && state.extras.link.trim()) {
+      flash('当前离线，暂无法加载二维码模块', 4000);
+    }
+  });
+}
+
+/* ====================================================================
  * 预览渲染与移动端自适应尺寸
  * ==================================================================== */
 
@@ -1300,6 +1341,7 @@ function bindEditor() {
       state.extras[key] = !state.extras[key];
       block.classList.toggle('on', state.extras[key]);
       setSwitch(block.querySelector('.switch'), state.extras[key]);
+      if (key === 'qr' && state.extras.qr) loadQrAndRender({ warnOffline: true });
       touch();
     });
   }
@@ -1308,6 +1350,7 @@ function bindEditor() {
       $(id).addEventListener('input', (e) => {
         state.extras[key] = e.target.value;
         if (key === 'dateText') meta.dateEdited = true;
+        if (key === 'link' && state.extras.qr && e.target.value.trim()) loadQrAndRender({ warnOffline: true });
         touch();
       });
     }
@@ -1443,6 +1486,9 @@ async function generateExport() {
   setExportBusy(true);
   try {
     await ensureFonts(3500);
+    if (state.extras.qr && state.extras.link.trim() && TEMPLATE_INFO[state.template].supports.qr !== false) {
+      await ensureQrLib();
+    }
     await delay(30);
     if (token !== exp.token) return;
     const canvas = document.createElement('canvas');
@@ -1726,6 +1772,7 @@ async function boot() {
   registerServiceWorker();
 
   const saved = applySaved(store.loadSettings());
+  if (state.extras.qr) loadQrAndRender();
 
   const source = makeDefaultCover();
   const found = extractSeeds(source);

@@ -11,8 +11,8 @@
  */
 'use strict';
 
-const CACHE = 'lyric-card-v5';
-const FONT_CACHE = 'lyric-card-fonts-v5';
+const CACHE = 'lyric-card-v6';
+const FONT_CACHE = 'lyric-card-fonts-v6';
 const KEEP = [CACHE, FONT_CACHE];
 
 // 相对 sw.js 所在目录，页面放在任何子路径都成立
@@ -29,7 +29,6 @@ const PRECACHE = [
   'src/render/common.js',
   'src/render/templates.js',
   'src/render/index.js',
-  'vendor/qrcode.js',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -48,7 +47,8 @@ const NAVIGATE_TIMEOUT = 4500;
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    const requests = PRECACHE.map((url) => new Request(url, { cache: 'reload' }));
+    // 用 no-cache 走条件请求（If-None-Match → 304），首次安装复用刚下好的浏览器缓存，版本升级时拉新文件
+    const requests = PRECACHE.map((url) => new Request(url, { cache: 'no-cache' }));
     if (DEV) {
       // 开发时文件可能还没写完，缺几个不影响安装
       await Promise.allSettled(requests.map((r) => cache.add(r)));
@@ -57,7 +57,7 @@ self.addEventListener('install', (event) => {
       await cache.addAll(requests);
     }
     // 根目录（./）有的服务器没配默认首页，单独试，失败也没关系
-    try { await cache.add(new Request('./', { cache: 'reload' })); } catch (err) { /* 忽略 */ }
+    try { await cache.add(new Request('./', { cache: 'no-cache' })); } catch (err) { /* 忽略 */ }
     await self.skipWaiting();
   })());
 });
@@ -91,8 +91,18 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(navigate(event, req, url));
     return;
   }
+  if (!DEV && isImmutableAsset(url)) {
+    event.respondWith(cacheFirst(req, CACHE));
+    return;
+  }
   event.respondWith(DEV ? networkFirst(req) : staleWhileRevalidate(event, req));
 });
+
+function isImmutableAsset(url) {
+  const dir = new URL('./', self.location.href).pathname;
+  const rel = url.pathname.startsWith(dir) ? url.pathname.slice(dir.length) : url.pathname.replace(/^\/+/, '');
+  return rel.startsWith('icons/') || rel.startsWith('vendor/');
+}
 
 function isFontRequest(req, url) {
   return FONT_HOSTS.includes(url.hostname) || req.destination === 'font' || req.destination === 'style';
