@@ -1,0 +1,32 @@
+{
+  "_说明": "封面检索表。页面用 iTunes Search API 在浏览器里查封面，图片只留在内存里。term = 搜索词；entity = album 或 song（song 取的是这首歌所在专辑的封面）；country = jp / us / tw；match = 可选，用来核对专辑名（正则，忽略大小写；写了就必须命中，否则这一条算没找到）；alt = 备用检索（没写的字段沿用上一层）。查不到的封面会被跳过，不会让整次检查失败。",
+  "covers": [
+    { "id": "nbuna-tsuki", "label": "n-buna 月を歩いている", "term": "n-buna 月を歩いている", "entity": "album", "country": "jp", "match": "月を歩いている" },
+    { "id": "yorushika-dakara", "label": "ヨルシカ だから僕は音楽を辞めた", "term": "ヨルシカ だから僕は音楽を辞めた", "entity": "album", "country": "jp", "match": "^だから僕は音楽を辞めた$" },
+    { "id": "yorushika-elma", "label": "ヨルシカ エルマ", "term": "ヨルシカ エルマ", "entity": "album", "country": "jp", "match": "^(Elma|エルマ)$" },
+    { "id": "yorushika-tosaku", "label": "ヨルシカ 盗作", "term": "ヨルシカ 盗作", "entity": "album", "country": "jp", "match": "^(Plagiarism|盗作)$" },
+    { "id": "yoasobi-book", "label": "YOASOBI THE BOOK", "term": "YOASOBI THE BOOK", "entity": "album", "country": "jp", "match": "^THE BOOK$" },
+    { "id": "yoasobi-book3", "label": "YOASOBI THE BOOK 3", "term": "YOASOBI THE BOOK 3", "entity": "album", "country": "jp", "match": "^THE BOOK 3$" },
+    { "id": "yonezu-straysheep", "label": "米津玄師 STRAY SHEEP", "term": "米津玄師 STRAY SHEEP", "entity": "album", "country": "jp", "match": "^STRAY SHEEP" },
+    { "id": "zutomayo-hisohiso", "label": "ずっと真夜中でいいのに。 潜潜話", "term": "ずっと真夜中でいいのに。 潜潜話", "entity": "album", "country": "jp", "match": "Hisohiso|潜潜話" },
+    { "id": "ado-kyogen", "label": "Ado 狂言", "term": "Ado 狂言", "entity": "album", "country": "jp", "match": "Kyougen|狂言" },
+    { "id": "utada-badmode", "label": "宇多田ヒカル BADモード", "term": "宇多田ヒカル BADモード", "entity": "album", "country": "jp", "match": "^BAD ?(モード|MODE)$",
+      "alt": [ { "term": "宇多田ヒカル BADモード", "entity": "song" } ] },
+    { "id": "utada-onelastkiss", "label": "宇多田ヒカル One Last Kiss", "term": "宇多田ヒカル One Last Kiss", "entity": "album", "country": "jp", "match": "^One Last Kiss$" },
+    { "id": "sakamoto-async", "label": "坂本龍一 async", "term": "坂本龍一 async", "entity": "album", "country": "jp", "match": "^async$" },
+    { "id": "jay-yehuimei", "label": "周杰倫 葉惠美", "term": "周杰倫 葉惠美", "entity": "album", "country": "tw", "match": "葉惠美" },
+    { "id": "pinkfloyd-darkside", "label": "Pink Floyd The Dark Side of the Moon", "term": "Pink Floyd The Dark Side of the Moon", "entity": "album", "country": "us", "match": "^The Dark Side of the Moon$",
+      "alt": [ { "term": "Pink Floyd Time", "entity": "song" } ] },
+    { "id": "swift-folklore", "label": "Taylor Swift folklore", "term": "Taylor Swift folklore", "entity": "album", "country": "us", "match": "^folklore$" },
+    { "id": "eilish-hte", "label": "Billie Eilish Happier Than Ever", "term": "Billie Eilish Happier Than Ever", "entity": "album", "country": "us", "match": "^Happier Than Ever$" },
+    { "id": "weeknd-afterhours", "label": "The Weeknd After Hours", "term": "The Weeknd After Hours", "entity": "album", "country": "us", "match": "^After Hours$" },
+    { "id": "ocean-blonde", "label": "Frank Ocean Blonde", "term": "Frank Ocean Blonde", "entity": "album", "country": "us", "match": "^Blonde$",
+      "alt": [ { "term": "Blonde Frank Ocean", "entity": "song" } ] },
+    { "id": "daftpunk-ram", "label": "Daft Punk Random Access Memories", "term": "Daft Punk Random Access Memories", "entity": "album", "country": "us", "match": "^Random Access Memories$" },
+    { "id": "radiohead-inrainbows", "label": "Radiohead In Rainbows", "term": "Radiohead In Rainbows", "entity": "album", "country": "us", "match": "^In Rainbows$" },
+    { "id": "nbuna-umiyuri", "label": "n-buna ウミユリ海底譚（歌曲）", "term": "n-buna ウミユリ海底譚", "entity": "song", "country": "jp" },
+    { "id": "yorushika-goto", "label": "ヨルシカ 強盗と花束（歌曲）", "term": "ヨルシカ 強盗と花束", "entity": "song", "country": "jp" },
+    { "id": "fujii-loveall", "label": "藤井風 LOVE ALL SERVE ALL", "term": "藤井風 LOVE ALL SERVE ALL", "entity": "album", "country": "jp", "match": "^LOVE ALL SERVE ALL$" },
+    { "id": "vaundy-strobo", "label": "Vaundy strobo", "term": "Vaundy strobo", "entity": "album", "country": "jp", "match": "^strobo$" }
+  ]
+}

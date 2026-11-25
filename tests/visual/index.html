@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Lyrics 4U 取色与模板视觉检查</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 20px 48px; background: #9a9a9a; color: #111;
+    font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  h2 { font-size: 14px; margin: 0 0 8px; }
+  .panel { background: #fff; border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; }
+  .muted { color: #555; }
+  .small { font-size: 12px; }
+  code { font: 12px ui-monospace, Consolas, monospace; background: #eee; padding: 0 3px; border-radius: 3px; }
+
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-top: 10px; }
+  button, select { font: inherit; padding: 4px 10px; border: 1px solid #888; border-radius: 4px; background: #f3f3f3; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+  progress { width: 220px; height: 10px; vertical-align: middle; }
+  #progress { margin-top: 8px; min-height: 20px; }
+  #drop { border: 2px dashed #999; border-radius: 6px; padding: 8px 12px; color: #444; }
+  body.dragging #drop { border-color: #111; background: #eef; }
+
+  #api .ok { color: #0a7a2f; } #api .miss { color: #b00020; font-weight: 600; }
+  #api li { margin: 1px 0; }
+  #api ul { margin: 4px 0 0; padding-left: 18px; columns: 2; }
+
+  .verdict { padding: 8px 12px; border-radius: 4px; font-weight: 600; margin-bottom: 10px; }
+  .verdict.pass { background: #dff3e4; color: #0a5a24; }
+  .verdict.fail { background: #fde2e2; color: #8a0f1f; }
+  .verdict.wait { background: #eee; color: #444; }
+
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { border: 1px solid #ccc; padding: 3px 7px; text-align: left; vertical-align: top; }
+  th { background: #f0f0f0; position: sticky; top: 0; }
+  td.pass { background: #e6f5ea; } td.fail { background: #fde8e8; } td.na { background: #f4f4f4; color: #777; }
+  td.pass b { color: #0a7a2f; } td.fail b { color: #b00020; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .chip { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 2px; vertical-align: -2px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }
+  .chip.def { box-shadow: 0 0 0 2px #111; }
+  a { color: #0b4fb3; }
+
+  .sheet { background: #fff; border-radius: 6px; margin-bottom: 12px; padding: 8px 10px 10px; }
+  .sheet header { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; margin-bottom: 6px; }
+  .sheet h3 { font-size: 14px; margin: 0; }
+  .sheet .tag { font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 9px; }
+  .tag.pass { background: #dff3e4; color: #0a5a24; } .tag.fail { background: #fde2e2; color: #8a0f1f; } .tag.na { background: #eee; color: #555; }
+  .sheet header .grow { flex: 1; }
+  .sheet .view { overflow-x: auto; }
+  .sheet canvas { display: block; max-width: 100%; height: auto; cursor: zoom-in; background: #fff; }
+  .sheet canvas.natural { max-width: none; cursor: zoom-out; }
+  .sheet details { margin-top: 6px; }
+  .sheet pre { margin: 4px 0 0; white-space: pre-wrap; font: 12px/1.45 ui-monospace, Consolas, "Microsoft YaHei", monospace; background: #f6f6f6; padding: 6px 8px; border-radius: 4px; }
+  .err { color: #b00020; }
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <h1>Lyrics 4U 取色与模板视觉检查</h1>
+  <div class="muted small">开发用页面，本地手动运行，不进 CI。封面从 iTunes 实时取、只放在内存里，不保存、不上传；示例歌词是自己写的。</div>
+  <div class="bar">
+    <button id="reload" type="button" title="模块按地址缓存，改了 src 之后要重新载入页面才会用上新代码">重新载入页面</button>
+    <label>画幅
+      <select id="ratio">
+        <option value="4:5" selected>4:5（统一，便于对比）</option>
+        <option value="9:16">9:16</option>
+        <option value="1:1">1:1</option>
+        <option value="default">各模板默认</option>
+      </select>
+    </label>
+    <button id="export" type="button" disabled>导出 PNG</button>
+    <label class="small muted"><input id="pick" type="file" accept="image/*" multiple> 或选择本地封面</label>
+  </div>
+  <div id="progress" class="small"><progress id="bar" value="0" max="1"></progress> <span id="progressText">准备中…</span></div>
+  <div id="drop" class="small" style="margin-top:8px">把本地封面图片拖到页面任意位置，会作为额外的一行加入检查（同样只在内存里）。</div>
+</div>
+
+<div class="panel small" id="api"><span class="muted">读取 src 模块…</span></div>
+
+<div class="panel">
+  <h2>汇总</h2>
+  <div id="verdict" class="verdict wait">尚未完成</div>
+  <div class="small muted" style="margin-bottom:6px">
+    <b>门 1 风格分离</b>：紧凑 / 经典 / 留白里，忠实、柔和、鲜明、单色四种风格两两背景色差 ΔE（OKLab×100）≥ 8，浅色、深色、自动分别算。
+    豁免（总图里用蓝灰框标出，不算失败）：种子色 C ≥ 0.15 时忠实与鲜明；自动明暗下忠实与任何风格接近（“接近（封面本色）”）；
+    种子色无彩（C &lt; 0.04）时只检查鲜明–柔和、忠实–鲜明。红框 = 未通过。<br>
+    <b>门 2 对比度</b>：<code>cardPalette</code> 直接算，覆盖全部色板 × 风格 × 明暗。正文：黑或白在该背景上能到 7 就必须 ≥ 7，否则 ≥ 黑/白最高值 − 0.05（且不低于 4.5）；次要文字、强调色 ≥ 4.5。<br>
+    <b>门 3 自动明暗</b>：只显示 meanL 和自动选出的明暗，不判定。
+  </div>
+  <div class="scroll"><table id="summary"><thead></thead><tbody></tbody></table></div>
+</div>
+
+<div id="sheets"></div>
+
+<script type="module" src="./check.js"></script>
+</body>
+</html>

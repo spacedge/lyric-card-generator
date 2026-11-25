@@ -1,15 +1,26 @@
-// The four card templates. Each layout(ctx, env, p, draw) returns the card's content height
+// The five card templates. Each layout(ctx, env, p, draw) returns the card's content height
 // in design pixels; with draw = false it only measures. Numbers follow the design boards
-// (half of the 1080 export size).
-import { palette, withAlpha, ensureContrast, hueDistance, hexToOklch, contrast } from '../color.js';
+// (half of the 1080 export size). Colours come from env.pal (cardPalette in color.js), so
+// every style and light/dark setting changes the card the same way in every template.
+import { withAlpha, hexToOklch } from '../color.js';
 import { hasKana } from '../text.js';
 import {
   W, MONO, familyFor, setFont, wrapIn, drawLines, drawSpaced, rr, drawCoverFit, drawCoverCard,
-  progressFraction, drawWave, drawQR, verticalHeight, drawVertical, drawGrain,
+  progressFraction, drawWave, drawQR, verticalHeight, drawVertical,
 } from './common.js';
+import { createBlurCache, blurImage } from './blur.js';
 
 const PLACEHOLDER = '歌词会出现在这里';
 const QR_LABEL = '长按识别二维码收听';
+
+// Gaussian sigma in design px for the photo templates' blur levels.
+export const BLUR_SIGMA = { light: 6, mid: 14, heavy: 24 };
+// Preview and thumbnail layers are cached (dragging the 景深 crop or editing text never re-blurs);
+// export-sized layers are large (a 2160-wide square is ~19 MB), so exports blur once and drop them.
+const blurCache = createBlurCache(6);
+function blurred(env, src, w, h, sigma) {
+  return env.purpose === 'export' ? blurImage(src, w, h, sigma) : blurCache.get(src, w, h, sigma);
+}
 
 // ---------- shared pieces ----------
 
@@ -128,49 +139,20 @@ function footer(ctx, env, o) {
   return y + rowH;
 }
 
-/** A colour from the cover far enough in hue from the seed (e.g. the moon's yellow on a blue cover). */
-function secondSeed(env) {
-  const base = env.sch.seed;
-  for (const hex of env.assets.seeds || []) {
-    const o = hexToOklch(hex);
-    if (o.C >= 0.05 && hueDistance(o.H, base.H) >= 60) return o;
-  }
-  return null;
+/** OKLab distance between two hex colours (0 = identical, ~0.1 = clearly different). */
+function okDistance(a, b) {
+  const p = hexToOklch(a), q = hexToOklch(b);
+  const ar = p.H * Math.PI / 180, br = q.H * Math.PI / 180;
+  return Math.hypot(p.L - q.L, p.C * Math.cos(ar) - q.C * Math.cos(br), p.C * Math.sin(ar) - q.C * Math.sin(br));
 }
 
-// ---------- 紧凑（方案 A 改良） ----------
-
-function compactColors(env) {
-  const st = env.st, s = env.sch.seed;
-  const H = s.C < 0.015 ? 250 : s.H;
-  const C = st.variant === 'mono' ? 0
-    : st.variant === 'tonal' ? Math.min(s.C, 0.09)
-    : st.variant === 'vibrant' ? Math.min(Math.max(s.C * 1.5, 0.12), 0.25)
-    : s.C;
-  const two = st.variant === 'mono' ? null : secondSeed(env);
-  if (st.dark.compact) {
-    const bg = palette(H, Math.min(C * 0.34, 0.048))(10);
-    const container = palette(H, Math.min(C * 0.44, 0.068))(19);
-    const on = palette(H, Math.min(C * 0.08, 0.013))(96);
-    const onVar = ensureContrast(palette(H, Math.min(C * 0.26, 0.048)), 74, bg, 5.8, 1);
-    const accPal = two ? palette(two.H, Math.min(Math.max(two.C, 0.06), 0.12))
-      : palette((H + 175) % 360, st.variant === 'mono' ? 0 : Math.min(Math.max(C * 0.35, 0.055), 0.09));
-    const accent = ensureContrast(accPal, 88, bg, 8, 1);
-    return { bg, container, on, onVar, accent, track: withAlpha(on, 0.16), shadow: 'rgba(3, 10, 26, 0.55)' };
-  }
-  const bg = palette(H, Math.min(C * 0.22, 0.032))(94);
-  const container = palette(H, Math.min(C * 0.30, 0.045))(89);
-  const on = ensureContrast(palette(H, Math.min(C * 0.32, 0.055)), 22, bg, 10.5, -1);
-  const onVar = ensureContrast(palette(H, Math.min(C * 0.28, 0.052)), 45, bg, 5.2, -1);
-  const accent = ensureContrast(palette(H, st.variant === 'mono' ? 0 : Math.min(Math.max(C * 0.75, 0.09), 0.16)), 40, bg, 5, -1);
-  return { bg, container, on, onVar, accent, track: withAlpha(on, 0.14), shadow: withAlpha(on, 0.28) };
-}
+// ---------- 紧凑 ----------
 
 const compact = {
   coverMax: 80, coverMin: 0, center: true,
   layout(ctx, env, p, draw) {
     const st = env.st, ex = st.extras, fs = p.fs, w = env.fp.w;
-    const c = compactColors(env);
+    const c = env.pal;
     const align = st.align === 'center' ? 'center' : 'left';
     const off = p.off || 0;
     const padX = 40, innerW = 460;
@@ -232,50 +214,39 @@ const compact = {
   },
 };
 
-// ---------- C 经典改良 ----------
-
-function classicColors(env) {
-  const st = env.st, sch = env.sch;
-  // Mono keeps the seed's lightness but drops its hue (for grey OKLab L = cbrt(Y), so tone = 116L - 16).
-  const bg = st.variant === 'mono'
-    ? palette(0, 0)(Math.max(0, Math.min(100, Math.round(116 * sch.seed.L - 16))))
-    : (st.seed || sch.seedHex);
-  const darkBg = contrast(bg, '#FFFFFF') >= contrast(bg, '#111111');
-  const dir = darkBg ? 1 : -1;
-  const ink = ensureContrast(sch.n, darkBg ? 95 : 10, bg, 7, dir);
-  const ink2 = ensureContrast(sch.p, darkBg ? 80 : 30, bg, 4.5, dir);
-  // Accent: another colour from the cover, else the seed's complement (a pale warm tone on blue).
-  const two = st.variant === 'mono' ? null : secondSeed(env);
-  const s = sch.seed;
-  const accPal = two ? palette(two.H, Math.max(two.C, 0.06))
-    : palette(((s.C < 0.015 ? 250 : s.H) + 175) % 360, st.variant === 'mono' ? 0 : Math.min(Math.max(s.C * 0.35, 0.055), 0.09));
-  const accent = ensureContrast(accPal, darkBg ? 87 : 35, bg, 4.5, dir);
-  return { bg, ink, ink2, accent, qrFg: sch.n(10), qrBg: sch.n(98) };
-}
+// ---------- 经典 ----------
 
 const classic = {
   coverMax: 540, coverMin: 240, center: false,
   layout(ctx, env, p, draw) {
     const st = env.st, fs = p.fs, w = env.fp.w;
-    const c = classicColors(env);
+    const c = env.pal;
     const align = st.align === 'center' ? 'center' : 'left';
     const ch = p.cover;
+    // Fade the cover into the background only when its bottom edge is close to the background;
+    // a long fade between unrelated colours reads as a smudge, so it shortens and then disappears.
+    const edgeGap = okDistance(env.analysis.edges.bottom, c.bg);
+    const fade = edgeGap <= 0.1 ? 132 : edgeGap <= 0.22 ? 56 : 0;
     if (draw) {
       ctx.fillStyle = c.bg;
       ctx.fillRect(0, 0, W, env.canvasH);
       drawCoverFit(ctx, env.cover.source, 0, 0, W, ch, 0.3);
-      const g = ctx.createLinearGradient(0, ch - 132, 0, ch);
-      g.addColorStop(0, withAlpha(c.bg, 0));
-      g.addColorStop(1, c.bg);
-      ctx.fillStyle = g;
-      ctx.fillRect(0, ch - 132, W, 133);
+      if (fade) {
+        const g = ctx.createLinearGradient(0, ch - fade, 0, ch);
+        g.addColorStop(0, withAlpha(c.bg, 0));
+        g.addColorStop(1, c.bg);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, ch - fade, W, fade + 1);
+      }
     }
     const hasMeta = (st.title || '').trim() || (st.artist || '').trim();
-    let y = hasMeta ? ch - 36 : ch;
+    // With the long fade the title sits on the faded edge of the cover, as in the design;
+    // otherwise it starts below the cover.
+    let y = !hasMeta ? ch : fade === 132 ? ch - 36 : ch + 28;
     y = titleBlock(ctx, env, {
       x: align === 'center' ? W / 2 : 36, y, maxW: 468, align, draw,
-      tSize: 28 * fs, tLh: 36 * fs, tW: w.medium, tColor: c.ink,
-      aSize: 15 * fs, aLh: 22 * fs, aW: w.regular, aColor: c.ink2, gap: 4,
+      tSize: 28 * fs, tLh: 36 * fs, tW: w.medium, tColor: c.on,
+      aSize: 15 * fs, aLh: 22 * fs, aW: w.regular, aColor: c.onVar, gap: 4,
     });
     y += 40;
 
@@ -283,140 +254,225 @@ const classic = {
     const lx = align === 'center' ? W / 2 : 36;
     const ms = p.groups.map((g) => measureGroup(ctx, env, g, 468, spec));
     const gap = 32 * fs;
-    if (!ms.length) { placeholder(ctx, env, lx, y, align, c.ink2, draw); y += 22; }
+    if (!ms.length) { placeholder(ctx, env, lx, y, align, c.onVar, draw); y += 22; }
     ms.forEach((m, i) => {
       if (i) y += gap;
       const on = env.focus.has(m.idx);
-      if (draw) drawGroup(ctx, m, lx, y, on ? { o: c.accent, t: c.accent } : { o: c.ink, t: c.ink2 }, align);
+      if (draw) drawGroup(ctx, m, lx, y, on ? { o: c.accent, t: c.accent } : { o: c.on, t: c.onVar }, align);
       pushHit(env, m.idx, 24, y, 492, m.h, gap);
       y += m.h;
     });
 
     y = footer(ctx, env, {
       x: 36, right: 504, y, gapTop: 52, qrSize: 64, draw,
-      c: { text: c.ink, sub: c.ink2, date: c.ink2, qrFg: c.qrFg, qrBg: c.qrBg },
+      c: { text: c.on, sub: c.onVar, date: c.onVar, qrFg: '#111111', qrBg: '#FFFFFF' },
     });
     return y + 64;
   },
 };
 
-// ---------- D 沉浸 ----------
+// ---------- photo templates: shared pieces ----------
 
-function immersiveColors(env) {
-  const st = env.st, sch = env.sch;
-  if (st.dark.immersive) {
-    return {
-      base: sch.p(10), scrim: withAlpha(sch.p(10), st.scrim), grad: withAlpha(sch.p(10), 0.55),
-      ink: '#FFFFFF', ink2: 'rgba(255, 255, 255, 0.78)', sub: sch.p(87), time: 'rgba(255, 255, 255, 0.72)',
-      wave: '#FFFFFF', track: 'rgba(255, 255, 255, 0.28)',
-    };
+/** Neutral (never tinted) text colours for text that sits on a photo. */
+function photoInk(dark) {
+  return dark
+    ? { ink: '#FFFFFF', ink2: 'rgba(255, 255, 255, 0.8)', sub: 'rgba(255, 255, 255, 0.78)', time: 'rgba(255, 255, 255, 0.72)', wave: '#FFFFFF', track: 'rgba(255, 255, 255, 0.3)', tone: '0, 0, 0' }
+    : { ink: '#15171C', ink2: 'rgba(21, 23, 28, 0.78)', sub: 'rgba(21, 23, 28, 0.72)', time: 'rgba(21, 23, 28, 0.7)', wave: '#15171C', track: 'rgba(21, 23, 28, 0.25)', tone: '255, 255, 255' };
+}
+
+/** Gradients only where text sits: a band at the top for the title row, and one under the lyrics. */
+function textShades(ctx, H, lyricsTop, ink, dark) {
+  const t = ink.tone;
+  const top = ctx.createLinearGradient(0, 0, 0, 120);
+  top.addColorStop(0, `rgba(${t}, ${dark ? 0.45 : 0.55})`);
+  top.addColorStop(1, `rgba(${t}, 0)`);
+  ctx.fillStyle = top;
+  ctx.fillRect(0, 0, W, 120);
+  const from = Math.max(0, lyricsTop - 90);
+  const bot = ctx.createLinearGradient(0, from, 0, H);
+  bot.addColorStop(0, `rgba(${t}, 0)`);
+  bot.addColorStop(0.3, `rgba(${t}, ${dark ? 0.42 : 0.55})`);
+  bot.addColorStop(1, `rgba(${t}, ${dark ? 0.64 : 0.78})`);
+  ctx.fillStyle = bot;
+  ctx.fillRect(0, from, W, H - from);
+}
+
+/** Thumbnail, title, artist and optional date along the top of a photo card. */
+function photoHeader(ctx, env, ink) {
+  const st = env.st, ex = st.extras, w = env.fp.w;
+  drawCoverCard(ctx, env.cover.source, 32, 32, 64, 14, null, env.k);
+  const showDate = env.sup.date && ex.date && (ex.dateText || '').trim();
+  let dateW = 0;
+  if (showDate) {
+    setFont(ctx, 400, 11, MONO);
+    dateW = ctx.measureText(ex.dateText.trim()).width + ex.dateText.trim().length * 0.6 + 16;
   }
+  const tx = 110, tMax = W - tx - 32 - dateW;
+  const t = (st.title || '').trim(), a = (st.artist || '').trim();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  if (t) {
+    setFont(ctx, w.medium, 17, familyFor(env.fp, t));
+    ctx.fillStyle = ink.ink;
+    ctx.fillText(ellipsize(ctx, t, tMax), tx, a ? 52 : 64);
+  }
+  if (a) {
+    setFont(ctx, w.regular, 13, familyFor(env.fp, a));
+    ctx.fillStyle = ink.sub;
+    ctx.fillText(ellipsize(ctx, a, tMax), tx, t ? 75 : 64);
+  }
+  if (showDate) {
+    setFont(ctx, 400, 11, MONO);
+    ctx.fillStyle = ink.time;
+    drawSpaced(ctx, ex.dateText.trim(), W - 32, 64, 0.6, 'right');
+  }
+}
+
+/** Lyrics for the photo templates: bottom-aligned; focus is marked by brightness only. */
+function photoLyrics(ctx, env, p, H, draw) {
+  const st = env.st, ex = st.extras, fs = p.fs, w = env.fp.w;
+  const spec = { oSize: 28 * fs, oLh: 38 * fs, oW: w.bold, tSize: 16 * fs, tLh: 24 * fs, tW: w.regular, gap: 6 * fs };
+  const gap = 28 * fs;
+  const ms = p.groups.map((g) => measureGroup(ctx, env, g, 476, spec));
+  const lyrH = ms.length ? stackHeight(ms, gap) : 22;
+  const showProg = env.sup.progress && ex.progress;
+  const bottom = showProg ? 32 + 42 : 0;
+  const natural = 32 + 64 + 32 + lyrH + bottom + 32;
+  const top = Math.max(128, (H || natural) - 32 - bottom - lyrH);
   return {
-    base: sch.p(98), scrim: withAlpha(sch.p(98), Math.min(0.92, st.scrim + 0.25)), grad: withAlpha(sch.p(98), 0.6),
-    ink: sch.n(10), ink2: sch.nv(30), sub: sch.p(40), time: sch.nv(30),
-    wave: sch.p(40), track: withAlpha(sch.n(10), 0.2),
+    natural, top, showProg,
+    draw(ink) {
+      const align = st.align === 'center' ? 'center' : 'left';
+      const lx = align === 'center' ? W / 2 : 32;
+      let ly = top;
+      if (!ms.length) placeholder(ctx, env, lx, ly, align, ink.ink2, true);
+      ms.forEach((m, i) => {
+        if (i) ly += gap;
+        const on = env.focus.has(m.idx);
+        ctx.globalAlpha = env.hasFocus && !on ? 0.4 : 1;
+        drawGroup(ctx, m, lx, ly, { o: ink.ink, t: ink.ink2 }, align);
+        ctx.globalAlpha = 1;
+        pushHit(env, m.idx, 24, ly, 492, m.h, gap);
+        ly += m.h;
+      });
+      if (showProg) {
+        const py = H - 32 - 42;
+        drawWave(ctx, 32, py + 10, 476, progressFraction(ex), { active: ink.wave, track: ink.track }, 4, 3, 30);
+        timesRow(ctx, env, 32, W - 32, py + 34, ink.time);
+      }
+    },
   };
 }
+
+/** A design-px rectangle as device px for the blur cache. */
+const dev = (env, v) => Math.max(1, Math.round(v * env.k));
+
+/** Offscreen card-sized canvas (device px) with the same transform as the card. */
+function cardLayer(env, H) {
+  const c = document.createElement('canvas');
+  c.width = dev(env, W);
+  c.height = dev(env, H);
+  const g = c.getContext('2d');
+  g.setTransform(env.k, 0, 0, env.k, 0, 0);
+  return { c, g };
+}
+
+/** Keep a vertical band of a layer: stops are [position 0..1, alpha]. */
+function maskVertical(layer, H, stops) {
+  const g = layer.g;
+  g.globalCompositeOperation = 'destination-in';
+  const m = g.createLinearGradient(0, 0, 0, H);
+  for (const [pos, a] of stops) m.addColorStop(pos, `rgba(0, 0, 0, ${a})`);
+  g.fillStyle = m;
+  g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'source-over';
+}
+
+// ---------- 沉浸：完整封面 · 轻模糊 ----------
 
 const immersive = {
   coverMax: 0, coverMin: 0, center: false,
   layout(ctx, env, p, draw) {
-    const st = env.st, ex = st.extras, fs = p.fs, w = env.fp.w;
-    const align = st.align === 'center' ? 'center' : 'left';
-    const spec = { oSize: 28 * fs, oLh: 38 * fs, oW: w.bold, tSize: 16 * fs, tLh: 24 * fs, tW: w.regular, gap: 6 * fs };
-    const gap = 28 * fs;
-    const ms = p.groups.map((g) => measureGroup(ctx, env, g, 476, spec));
-    const lyrH = ms.length ? stackHeight(ms, gap) : 22;
-    const showProg = env.sup.progress && ex.progress;
-    const bottom = showProg ? 32 + 42 : 0;
-    const natural = 32 + 64 + 32 + lyrH + bottom + 32;
-    if (!draw) return natural;
+    const H = env.H || 960;
+    const lyr = photoLyrics(ctx, env, p, H, draw);
+    if (!draw) return lyr.natural;
 
-    const H = env.canvasH;
-    const c = immersiveColors(env);
-    ctx.fillStyle = c.base;
+    const dark = env.darkMode;
+    const ink = photoInk(dark);
+    const src = env.cover.source;
+    const sigma = BLUR_SIGMA[env.st.blur.immersive] ?? BLUR_SIGMA.mid;
+    // Far layer: the cover heavily blurred, filling the whole frame (fills the bands above and below).
+    const side = Math.max(W, H);
+    const far = blurred(env, src, dev(env, side), dev(env, side), 48 * env.k);
+    ctx.drawImage(far, (W - side) / 2, (H - side) / 2, side, side);
+    // Near layer: the whole square cover, lightly blurred, fading into the far layer at top and bottom.
+    const near = blurred(env, src, dev(env, W), dev(env, W), sigma * env.k);
+    const y0 = H > W ? Math.round((H - W) / 2) : 0;
+    if (H > W) {
+      const layer = cardLayer(env, H);
+      layer.g.drawImage(near, 0, y0, W, W);
+      const fade = Math.min(120, (H - W) / 2 + 60);
+      maskVertical(layer, H, [[0, 0], [(y0) / H, 0], [(y0 + fade) / H, 1], [(y0 + W - fade) / H, 1], [(y0 + W) / H, 0], [1, 0]]);
+      ctx.drawImage(layer.c, 0, 0, W, H);
+    } else {
+      ctx.drawImage(near, 0, 0, W, W);
+    }
+    ctx.fillStyle = `rgba(${ink.tone}, ${dark ? 0.18 : 0.22})`;
     ctx.fillRect(0, 0, W, H);
-    const side = Math.max(W, H) * 1.25;
-    ctx.drawImage(env.cover.blurred, (W - side) / 2, (H - side) / 2, side, side);
-    ctx.fillStyle = c.scrim;
-    ctx.fillRect(0, 0, W, H);
-    const g = ctx.createLinearGradient(0, H * 0.62, 0, H);
-    g.addColorStop(0, withAlpha(c.base, 0));
-    g.addColorStop(1, c.grad);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, H * 0.62, W, H * 0.38 + 1);
-    drawGrain(ctx, W, H, env.k, 0.1);
-
-    // Top row: thumbnail, title, artist, optional date.
-    drawCoverCard(ctx, env.cover.source, 32, 32, 64, 14, null, env.k);
-    const showDate = env.sup.date && ex.date && (ex.dateText || '').trim();
-    let dateW = 0;
-    if (showDate) {
-      setFont(ctx, 400, 11, MONO);
-      dateW = ctx.measureText(ex.dateText.trim()).width + ex.dateText.trim().length * 0.6 + 16;
-    }
-    const tx = 110, tMax = W - tx - 32 - dateW;
-    const t = (st.title || '').trim(), a = (st.artist || '').trim();
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    if (t) {
-      setFont(ctx, w.medium, 17, familyFor(env.fp, t));
-      ctx.fillStyle = c.ink;
-      ctx.fillText(ellipsize(ctx, t, tMax), tx, a ? 52 : 64);
-    }
-    if (a) {
-      setFont(ctx, w.regular, 13, familyFor(env.fp, a));
-      ctx.fillStyle = c.sub;
-      ctx.fillText(ellipsize(ctx, a, tMax), tx, t ? 75 : 64);
-    }
-    if (showDate) {
-      setFont(ctx, 400, 11, MONO);
-      ctx.fillStyle = c.time;
-      drawSpaced(ctx, ex.dateText.trim(), W - 32, 64, 0.6, 'right');
-    }
-
-    // Lyrics centred in the space between the top row and the bottom.
-    const regionTop = 128, regionBot = H - 32 - bottom;
-    let ly = regionTop + Math.max(0, (regionBot - regionTop - lyrH) / 2);
-    const lx = align === 'center' ? W / 2 : 32;
-    if (!ms.length) placeholder(ctx, env, lx, ly, align, c.ink2, true);
-    ms.forEach((m, i) => {
-      if (i) ly += gap;
-      const on = env.focus.has(m.idx);
-      ctx.globalAlpha = env.hasFocus && !on ? 0.4 : 1;
-      drawGroup(ctx, m, lx, ly, { o: c.ink, t: c.ink2 }, align);
-      ctx.globalAlpha = 1;
-      pushHit(env, m.idx, 24, ly, 492, m.h, gap);
-      ly += m.h;
-    });
-
-    if (showProg) {
-      const py = H - 32 - 42;
-      drawWave(ctx, 32, py + 10, 476, progressFraction(ex), { active: c.wave, track: c.track }, 4, 3, 30);
-      timesRow(ctx, env, 32, W - 32, py + 34, c.time);
-    }
-    return natural;
+    textShades(ctx, H, lyr.top, ink, dark);
+    photoHeader(ctx, env, ink);
+    lyr.draw(ink);
+    return lyr.natural;
   },
 };
 
-// ---------- E 留白 ----------
+// ---------- 景深：铺满取景 · 上清下柔 ----------
 
-function quietColors(env) {
-  const st = env.st, sch = env.sch;
-  const two = st.variant === 'mono' ? null : secondSeed(env);
-  if (st.dark.quiet) {
-    const bg = sch.p(20);
-    return {
-      bg, ink: sch.p(95), ink2: ensureContrast(sch.p, 80, bg, 4.5, 1),
-      dot: two ? palette(two.H, Math.max(two.C, 0.06))(80) : sch.t(80), track: withAlpha(sch.p(95), 0.2),
-    };
-  }
-  const bg = sch.p(90);
-  return {
-    bg, ink: sch.p(20), ink2: ensureContrast(sch.p, 40, bg, 4.5, -1),
-    dot: two ? palette(two.H, Math.max(two.C, 0.06))(72) : sch.t(70), track: withAlpha(sch.p(20), 0.18),
-  };
+/** Crop offset (design px) so that the chosen point of the cover sits in the middle of the card. */
+export function depthCrop(state, analysis, H) {
+  const S = Math.round(H * 1.04);
+  const fx = state.depthX ?? analysis.focus.x ?? 0.5;
+  const x0 = Math.min(0, Math.max(W - S, Math.round(W / 2 - fx * S)));
+  return { S, x0, y0: Math.round((H - S) / 2), range: S - W };
 }
+
+const DEPTH_FAR = { light: 18, mid: 30, heavy: 44 };
+
+const depth = {
+  coverMax: 0, coverMin: 0, center: false,
+  layout(ctx, env, p, draw) {
+    const H = env.H || 960;
+    const lyr = photoLyrics(ctx, env, p, H, draw);
+    if (!draw) return lyr.natural;
+
+    const dark = env.darkMode;
+    const ink = photoInk(dark);
+    const src = env.cover.source;
+    const { S, x0, y0 } = depthCrop(env.st, env.analysis, H);
+    const farSigma = DEPTH_FAR[env.st.blur.depth] ?? DEPTH_FAR.mid;
+    const sizes = dev(env, S);
+    const far = blurred(env, src, sizes, sizes, farSigma * env.k);
+    const mid = blurred(env, src, sizes, sizes, farSigma / 3 * env.k);
+    // Bottom: far blur everywhere; middle band: lighter blur; top: the sharp cover.
+    ctx.drawImage(far, x0, y0, S, S);
+    const midLayer = cardLayer(env, H);
+    midLayer.g.drawImage(mid, x0, y0, S, S);
+    maskVertical(midLayer, H, [[0, 1], [0.55, 1], [0.78, 0], [1, 0]]);
+    ctx.drawImage(midLayer.c, 0, 0, W, H);
+    const nearLayer = cardLayer(env, H);
+    drawCoverFit(nearLayer.g, src, x0, y0, S, S);
+    maskVertical(nearLayer, H, [[0, 1], [0.32, 1], [0.55, 0], [1, 0]]);
+    ctx.drawImage(nearLayer.c, 0, 0, W, H);
+    ctx.fillStyle = `rgba(${ink.tone}, ${dark ? 0.1 : 0.14})`;
+    ctx.fillRect(0, 0, W, H);
+    textShades(ctx, H, lyr.top, ink, dark);
+    photoHeader(ctx, env, ink);
+    lyr.draw(ink);
+    return lyr.natural;
+  },
+};
+
+// ---------- 留白 ----------
 
 const quiet = {
   coverMax: 244, coverMin: 128, center: false,
@@ -450,7 +506,8 @@ const quiet = {
     const need = fixedH ? contentEnd : Math.max(960, contentEnd);
     if (!draw) return need;
 
-    const c = quietColors(env);
+    const P = env.pal;
+    const c = { bg: P.bg, ink: P.on, ink2: P.onVar, dot: P.accent, track: withAlpha(P.on, 0.18) };
     ctx.fillStyle = c.bg;
     ctx.fillRect(0, 0, W, env.canvasH);
 
@@ -460,7 +517,11 @@ const quiet = {
       drawSpaced(ctx, ex.dateText.trim(), W - 40, Math.max(30, topY / 2), 1.3, 'right');
     }
 
-    drawCoverCard(ctx, env.cover.source, 40, topY, cs, 6, null, env.k);
+    // When the background is (almost) the cover's own edge colour, the square would dissolve into it;
+    // a faint shadow keeps its outline.
+    const blends = Math.min(okDistance(env.analysis.edges.top, c.bg), okDistance(env.analysis.edges.bottom, c.bg)) < 0.08;
+    const coverShadow = blends ? { color: P.isDark ? 'rgba(0, 0, 0, 0.45)' : withAlpha(P.on, 0.22), blur: 18, y: 6, fill: c.bg } : null;
+    drawCoverCard(ctx, env.cover.source, 40, topY, cs, 6, coverShadow, env.k);
 
     // Vertical title and artist on the right edge, shrunk if they would reach the lyrics.
     const maxV = Math.max(96, lyTop - 36 - topY);
@@ -526,4 +587,4 @@ const quiet = {
   },
 };
 
-export const TEMPLATES = { compact, classic, immersive, quiet };
+export const TEMPLATES = { compact, classic, immersive, quiet, depth };
