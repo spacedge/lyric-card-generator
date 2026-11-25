@@ -28,7 +28,7 @@ const ACCENT_MIN = 4.5;     // 门 2：强调色
 const CARD_W = 540;         // 设计宽度
 const SCALE = 0.3;          // 缩略图渲染比例
 const SEARCH_GAP_MS = 1100; // iTunes 搜索的最小间隔（官方限额约每分钟 20 次）
-const MAX_PAGE_H = 30000;   // 导出的单张 PNG 最高像素
+const MAX_PAGE_H = 12000;   // 导出的单张 PNG 最高像素（再高的图很多看图软件打不开），超过就分页
 
 const SAMPLE_LYRICS = [
   '誰もいないホームに 夏の光が落ちてた',

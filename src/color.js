@@ -515,41 +515,90 @@ export function analyzeCover(source) {
 /* 卡片配色                                                            */
 /* ------------------------------------------------------------------ */
 
-/** 鲜明：这个色相彩度最高的色调（黄偏亮、蓝偏暗），再朝要求的明暗方向挪，只要彩度还有峰值的 85%。 */
-function vibrantBackground(src, dark) {
-  const pal = palette(src.H, 0.4);
+const STYLE_GAP = 0.08;                  // 四种风格的背景两两至少相距 ΔE 8（OKLab 欧氏距离 × 100）
+const VIBRANT_TONES = [26, 76];          // 鲜明风格可用的色调范围
+// 柔和风格依次试的色调。前四个是首选；最后的 36（深色）和 74（浅色）只在前面都分不开时才用到：
+// 忠实在 26 附近、单色在 8 时，夹在中间放不下第三种背景。36 是深色里仍能给正文 7:1 的最高色调
+const TONAL_TONES = { dark: [18, 22, 14, 26, 36], light: [88, 84, 92, 80, 74] };
+
+const oklabOf = hex => rgbToOklab(...hexToRgb(hex));
+
+/** hex 到 others 里每个颜色的距离的最小值（OKLab 欧氏距离）。 */
+function gapTo(hex, others) {
+  const lab = oklabOf(hex);
+  return Math.min(...others.map(other => labDist(lab, oklabOf(other))));
+}
+
+/**
+ * 按顺序在候选背景里取第一个与 others 都相距 ≥ STYLE_GAP 的；
+ * 一个都没有就取「到 others 的最小距离」最大的那个（并列取靠前的）。
+ */
+function firstSeparated(candidates, others) {
+  let best = candidates[0], bestGap = -Infinity;
+  for (const hex of candidates) {
+    const gap = gapTo(hex, others);
+    if (gap >= STYLE_GAP) return hex;
+    if (gap > bestGap) { best = hex; bestGap = gap; }
+  }
+  return best;
+}
+
+/** 鲜明的起始色调：这个色相彩度最高的色调（黄偏亮、蓝偏暗），再朝要求的明暗方向挪，只要彩度还有峰值的 85%。 */
+function vibrantStartTone(pal, dark) {
+  const [lo, hi] = VIBRANT_TONES;
   const chromaAt = tone => hexToOklch(pal(tone)).C;
   let peakTone = 50, peakChroma = 0;
-  for (let t = 26; t <= 76; t += 2) {
+  for (let t = lo; t <= hi; t += 2) {
     const c = chromaAt(t);
     if (c > peakChroma) { peakChroma = c; peakTone = t; }
   }
   const step = dark ? -2 : 2;
   let tone = peakTone;
-  while (tone + step >= 26 && tone + step <= 76 && chromaAt(tone + step) >= peakChroma * 0.85) tone += step;
-  return pal(tone);
+  while (tone + step >= lo && tone + step <= hi && chromaAt(tone + step) >= peakChroma * 0.85) tone += step;
+  return tone;
 }
 
-/** 四种风格的背景色，见 cardPalette。forced：用户固定了浅色 / 深色（不是跟随封面）。 */
+/**
+ * 鲜明的候选色调：从 start 起朝 away（±2）一路走到范围尽头，再从 start 的另一边走回去。
+ */
+function vibrantTones(start, away) {
+  const [lo, hi] = VIBRANT_TONES;
+  const tones = [];
+  for (let t = start; t >= lo && t <= hi; t += away) tones.push(t);
+  for (let t = start - away; t >= lo && t <= hi; t -= away) tones.push(t);
+  return tones;
+}
+
+/**
+ * 四种风格的背景色，见 cardPalette。forced：用户固定了浅色 / 深色（不是跟随封面）。
+ * 先定忠实和单色（不挪），再定柔和、最后定鲜明：后定的风格挪色调，直到与先定的每一个都相距 ΔE ≥ 8；
+ * 挪遍了还不够就取离得最远的。只算到 style 需要的那一步。
+ */
 function cardBackground({ seed, accent, style, dark, forced }) {
   const s = hexToOklch(seed);
   const T0 = toneOf(seed);
   const seedAdj = s.C > 0.22 ? palette(s.H, 0.2)(T0) : seed;       // 荧光色压到彩度 0.2，色调不变
 
-  switch (style) {
-    case 'tonal':
-      return palette(s.H, clamp(s.C * 0.45, 0.02, 0.05))(dark ? 16 : 88);
-    case 'vibrant': {
-      const src = s.C < VIVID_CHROMA && accent ? hexToOklch(accent) : s;
-      if (src.C < VIVID_CHROMA) return dark ? '#000000' : '#FFFFFF';   // 封面没有任何有彩色：纯黑 / 纯白
-      return vibrantBackground(src, dark);
-    }
-    case 'mono':
-      return palette(0, 0)(dark ? 8 : 97);
-    default:                                                         // 'content'
-      if (!forced || (dark ? T0 <= 32 : T0 >= 72)) return seedAdj;
-      return palette(s.H, Math.min(s.C, 0.2))(dark ? 26 : 76);
+  const content = !forced || (dark ? T0 <= 32 : T0 >= 72)
+    ? seedAdj
+    : palette(s.H, Math.min(s.C, 0.2))(dark ? 26 : 76);
+  const mono = palette(0, 0)(dark ? 8 : 98);
+  if (style === 'mono') return mono;
+  if (style !== 'tonal' && style !== 'vibrant') return content;
+
+  const tonalPal = palette(s.H, clamp(s.C * 0.45, 0.02, 0.05));
+  const tonal = firstSeparated((dark ? TONAL_TONES.dark : TONAL_TONES.light).map(tonalPal), [content, mono]);
+  if (style === 'tonal') return tonal;
+
+  const src = s.C < VIVID_CHROMA && accent ? hexToOklch(accent) : s;
+  if (src.C < VIVID_CHROMA) {
+    // 封面没有任何有彩色：纯黑 / 纯白，按明暗选；选中的那个和忠实撞在一起（白封面配纯白）时换成另一个
+    return firstSeparated(dark ? ['#000000', '#FFFFFF'] : ['#FFFFFF', '#000000'], [content, tonal, mono]);
   }
+  const pal = palette(src.H, 0.4);
+  const start = vibrantStartTone(pal, dark);
+  const away = start >= toneOf(content) ? 2 : -2;                  // 离忠实的色调越远越容易分开
+  return firstSeparated(vibrantTones(start, away).map(pal), [content, tonal, mono]);
 }
 
 /**
@@ -568,9 +617,12 @@ function cardBackground({ seed, accent, style, dark, forced }) {
  * 由种子色算出一张卡片的全部颜色。风格直接决定背景：
  * - content 忠实：封面自己的颜色（荧光色压到彩度 0.2）。mode 为 'auto' 时不改色调；
  *   固定浅色 / 深色时，种子色色调不合适（浅色 < 72、深色 > 32）就换成同色相的 76 / 26 色调。
- * - tonal 柔和：同色相、低彩度（0.02–0.05）、很浅（88）或很深（16）。
+ * - tonal 柔和：同色相、低彩度（0.02–0.05）、很浅（88）或很深（18）；若与忠实或单色的背景相距不足 ΔE 8，
+ *   依次试 TONAL_TONES 里后面的色调。
  * - vibrant 鲜明：最鲜艳的色相满彩度；种子色是无彩色时用 accent 的色相，都没有则纯黑 / 纯白。
- * - mono 单色：纯灰（97 / 8）；accent 仍是卡片上唯一的颜色。
+ *   与其它三种背景相距不足 ΔE 8 时，色调（26–76）朝远离忠实的方向挪。
+ * - mono 单色：纯灰（98 / 8）；accent 仍是卡片上唯一的颜色。
+ * 四种风格的背景（同一 seed / accent / mode / meanL）两两相距 ΔE ≥ 8，色域放不下时取最远的。
  * 文字色、容器色、强调色都由背景推出，并保证对比度。
  * @param {object} args
  * @param {string} args.seed '#RRGGBB'，当前选中的色块或自定义颜色

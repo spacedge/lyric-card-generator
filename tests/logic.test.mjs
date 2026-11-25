@@ -817,16 +817,38 @@ describe('color: cardPalette', () => {
   });
 
   describe('tonal 柔和', () => {
-    it('is the seed hue at low chroma (0.02–0.05), tone 88 (light) / 16 (dark)', () => {
+    const tonalChroma = hex => Math.min(Math.max(hexToOklch(hex).C * 0.45, 0.02), 0.05);
+
+    it('is the seed hue at low chroma (≤ 0.05) and a soft tone: 14–36 in dark, 74–92 in light', () => {
       for (const name of CHROMATIC) {
         const seed = SEEDS[name];
         const light = cardPalette({ seed, style: 'tonal', mode: 'light' }).bg;
         const dark = cardPalette({ seed, style: 'tonal', mode: 'dark' }).bg;
-        assert.ok(Math.abs(toneOf(light) - 88) < TONE_SLACK, `${name}: ${light} tone ${toneOf(light)}`);
-        assert.ok(Math.abs(toneOf(dark) - 16) < TONE_SLACK, `${name}: ${dark} tone ${toneOf(dark)}`);
-        assert.ok(hexToOklch(light).C < hexToOklch(seed).C);
+        assert.ok(toneOf(light) >= 74 - TONE_SLACK && toneOf(light) <= 92 + TONE_SLACK, `${name}: ${light} tone ${toneOf(light)}`);
+        assert.ok(toneOf(dark) >= 14 - TONE_SLACK && toneOf(dark) <= 36 + TONE_SLACK, `${name}: ${dark} tone ${toneOf(dark)}`);
+        for (const bg of [light, dark]) assert.ok(hexToOklch(bg).C <= 0.055, `${name}: ${bg} chroma ${hexToOklch(bg).C}`);
         assert.ok(hueDistance(hexToOklch(dark).H, hexToOklch(seed).H) < 12, `${name}: hue`);
       }
+    });
+
+    it('takes the first tone in the order 18, 22, 14, 26 (dark) / 88, 84, 92, 80 (light) that clears 8 from content and mono', () => {
+      // 深蓝：忠实在 23，单色在 8，18 已经够远
+      const blue = hexToOklch('#0A2E86');
+      assert.equal(cardPalette({ seed: '#0A2E86', style: 'tonal', mode: 'dark' }).bg, toneHex(blue.H, 0.05, 18));
+      // 强制浅色：深蓝的忠实被挪到 76，单色在 98，88 夹在中间够远
+      assert.equal(cardPalette({ seed: '#0A2E86', style: 'tonal', mode: 'light' }).bg, toneHex(blue.H, 0.05, 88));
+    });
+
+    it('moves on to later tones when the first is too close, and still clears 8 from content and mono', () => {
+      // 忠实在 25 附近：18 离它不够远
+      const seed = '#09453D';
+      const first = toneHex(hexToOklch(seed).H, tonalChroma(seed), 18);
+      const mono = cardPalette({ seed, style: 'mono', mode: 'dark' }).bg;
+      assert.ok(deltaE(first, seed) < 8 || deltaE(first, mono) < 8, 'test seed should reject tone 18');
+      const tonal = cardPalette({ seed, style: 'tonal', mode: 'dark' }).bg;
+      assert.notEqual(tonal, first);
+      assert.ok(deltaE(tonal, seed) >= 8, `content ${deltaE(tonal, seed)}`);
+      assert.ok(deltaE(tonal, mono) >= 8, `mono ${deltaE(tonal, mono)}`);
     });
 
     it('auto picks light or dark from meanL', () => {
@@ -836,13 +858,24 @@ describe('color: cardPalette', () => {
   });
 
   describe('vibrant 鲜明', () => {
-    it('on a grey seed with no accent gives pure black / white', () => {
-      for (const seed of ['#939393', '#0A090B', '#FFFFFF']) {
-        assert.equal(cardPalette({ seed, accent: null, style: 'vibrant', mode: 'dark' }).bg, '#000000', seed);
-        assert.equal(cardPalette({ seed, accent: null, style: 'vibrant', mode: 'light' }).bg, '#FFFFFF', seed);
+    it('on a grey seed with no accent gives pure black / white, whichever stands apart from the other styles', () => {
+      // A mid grey in dark mode gets black; in light mode white would sit on mono (tone 98), so it gets black too.
+      assert.equal(cardPalette({ seed: '#939393', accent: null, style: 'vibrant', mode: 'dark' }).bg, '#000000');
+      assert.equal(cardPalette({ seed: '#939393', accent: null, style: 'vibrant', mode: 'light' }).bg, '#000000');
+      // A near-black cover in dark mode keeps black: OKLab already puts #0A090B ~14 ΔE from #000000.
+      // A white cover in light mode (and on auto) gets black.
+      assert.equal(cardPalette({ seed: '#FFFFFF', accent: null, style: 'vibrant', mode: 'light' }).bg, '#000000');
+      assert.equal(cardPalette({ seed: '#F4F2EE', accent: null, style: 'vibrant', mode: 'auto', meanL: 0.97 }).bg, '#000000');
+      for (const seed of ['#939393', '#0A090B', '#FFFFFF', '#F4F2EE', '#5A5A5A']) {
+        for (const [mode, meanL] of [['light', 0.5], ['dark', 0.5], ['auto', 0.2], ['auto', 0.9]]) {
+          const pal = (style) => cardPalette({ seed, accent: null, style, mode, meanL }).bg;
+          const v = pal('vibrant');
+          assert.ok(['#000000', '#FFFFFF'].includes(v), `${seed} ${mode}: ${v}`);
+          for (const other of ['content', 'tonal', 'mono']) {
+            assert.ok(deltaE(v, pal(other)) >= 8, `${seed} ${mode}/${meanL}: vibrant ${v} vs ${other} ${pal(other)} ΔE ${deltaE(v, pal(other)).toFixed(1)}`);
+          }
+        }
       }
-      assert.equal(cardPalette({ seed: '#939393', style: 'vibrant', mode: 'auto', meanL: 0.2 }).bg, '#000000');
-      assert.equal(cardPalette({ seed: '#939393', style: 'vibrant', mode: 'auto', meanL: 0.8 }).bg, '#FFFFFF');
     });
 
     it("on a grey seed with an accent takes the accent's hue at high chroma", () => {
@@ -874,8 +907,39 @@ describe('color: cardPalette', () => {
     });
   });
 
+  describe('vibrant separation', () => {
+    it("moves away from content's tone when its peak-chroma tone collides, without touching content or mono", () => {
+      // 青色：强制浅色时忠实被挪到色调 76，鲜明的起点也在 76 附近
+      const seed = '#00C0D8';
+      const content = cardPalette({ seed, style: 'content', mode: 'light' }).bg;
+      const vibrant = cardPalette({ seed, style: 'vibrant', mode: 'light' }).bg;
+      const mono = cardPalette({ seed, style: 'mono', mode: 'light' }).bg;
+      assert.equal(content, toneHex(hexToOklch(seed).H, hexToOklch(seed).C, 76));
+      assert.equal(mono, toneHex(0, 0, 98));
+      assert.ok(deltaE(vibrant, content) >= 8, `content ${deltaE(vibrant, content)}`);
+      assert.ok(toneOf(vibrant) < toneOf(content), `vibrant ${vibrant} should be darker than content ${content}`);
+      assert.ok(hexToOklch(vibrant).C > 0.1, `still colourful: ${vibrant}`);
+    });
+
+    it('a grey seed with an accent also keeps its vibrant background apart from the others', () => {
+      for (const seed of ['#6E6E6E', '#808080', '#939393', '#C8C8C8', '#3A3A3A']) {
+        for (const accent of ['#E9BE6A', '#2A6FDB', '#C82828', '#2FA39A']) {
+          for (const [mode, meanL] of MODES) {
+            const bgs = STYLES.map(style => cardPalette({ seed, accent, style, mode, meanL }).bg);
+            for (let i = 0; i < bgs.length; i++) {
+              for (let j = i + 1; j < bgs.length; j++) {
+                if (STYLES[i] === 'content' || STYLES[j] === 'content') continue;      // 灰色种子的忠实本来就是灰，不在这里要求
+                assert.ok(deltaE(bgs[i], bgs[j]) >= 8, `${seed} ${accent} ${mode} ${meanL}: ${STYLES[i]}/${STYLES[j]} ${deltaE(bgs[i], bgs[j]).toFixed(1)}`);
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+
   describe('mono 单色', () => {
-    it('is pure grey, tone 97 (light) / 8 (dark), whatever the seed', () => {
+    it('is pure grey, tone 98 (light) / 8 (dark), and never moves, whatever the seed', () => {
       for (const seed of Object.values(SEEDS)) {
         const light = cardPalette({ seed, style: 'mono', mode: 'light' }).bg;
         const dark = cardPalette({ seed, style: 'mono', mode: 'dark' }).bg;
@@ -883,7 +947,9 @@ describe('color: cardPalette', () => {
           const [r, g, b] = hexToRgb(bg);
           assert.ok(r === g && g === b, `${seed}: ${bg}`);
         }
-        assert.ok(Math.abs(toneOf(light) - 97) < 1);
+        assert.equal(light, toneHex(0, 0, 98));
+        assert.equal(dark, toneHex(0, 0, 8));
+        assert.ok(Math.abs(toneOf(light) - 98) < 1);
         assert.ok(Math.abs(toneOf(dark) - 8) < 1);
       }
     });
@@ -927,12 +993,8 @@ describe('color: cardPalette', () => {
     );
     const chromaOf = hex => hexToOklch(hex).C;
 
-    it('every pair of styles differs by ΔE ≥ 8 for every chromatic seed (two documented exemptions)', { todo: 'style rules still miss this gate: tonal/mono dark ~7.1, content/vibrant and content/tonal in forced light — see PR notes' }, () => {
-      const stats = Object.fromEntries(PAIRS.map(([a, b]) => [`${a}/${b}`, {
-        gate: { d: Infinity, where: '-' }, all: { d: Infinity, where: '-' },
-      }]));
-      const exempt = { vivid: 0, autoClose: 0 };
-      let gated = 0;
+    it('every pair of the four styles differs by ΔE ≥ 8 for every chromatic seed in every mode', () => {
+      const min = Object.fromEntries(PAIRS.map(([a, b]) => [`${a}/${b}`, { d: Infinity, where: '-' }]));
       const failures = [];
       for (const seed of GRID_SEEDS) {
         for (const [mode, meanL] of MODES) {
@@ -941,28 +1003,17 @@ describe('color: cardPalette', () => {
             const pair = `${x}/${y}`;
             const d = deltaE(b[x], b[y]);
             const where = `${seed} ${mode}${mode === 'auto' ? ' ' + meanL : ''}`;
-            if (d < stats[pair].all.d) stats[pair].all = { d, where };
-            // 豁免 1：种子本身已经是鲜艳色（C ≥ 0.15），忠实和鲜明本来就该接近
-            // 豁免 2：自动明暗下忠实用的是种子原色，它的色调落在该风格色调 ±6、彩度相差 ≤ 0.04 之内
-            const vivid = pair === 'content/vibrant' && chromaOf(seed) >= 0.15;
-            const autoClose = !vivid && mode === 'auto' && x === 'content'
-              && Math.abs(toneOf(b.content) - toneOf(b[y])) <= 6
-              && Math.abs(chromaOf(b.content) - chromaOf(b[y])) <= 0.04;
-            if (vivid || autoClose) { exempt[vivid ? 'vivid' : 'autoClose']++; continue; }
-            gated++;
-            if (d < stats[pair].gate.d) stats[pair].gate = { d, where };
+            if (d < min[pair].d) min[pair] = { d, where };
             if (d < 8) failures.push({ pair, d, where });
           }
         }
       }
 
       const total = GRID_SEEDS.length * MODES.length * PAIRS.length;
-      const cell = ({ d, where }) => `${d.toFixed(1).padStart(5)} (${where})`;
       console.log([
-        `style separation: ${GRID_SEEDS.length} chromatic seeds × ${MODES.length} modes (auto counted for meanL 0.3 and 0.7) × ${PAIRS.length} pairs = ${total} cases`,
-        `  gated ${gated}; exempt: content/vibrant on vivid seeds ${exempt.vivid}, auto content close in tone and chroma ${exempt.autoClose}`,
-        '  minimum ΔE per pair   gated (worst case) | all cases including exempt',
-        ...PAIRS.map(([a, b]) => `  ${`${a}/${b}`.padEnd(16)} ${cell(stats[`${a}/${b}`].gate).padEnd(26)} | ${cell(stats[`${a}/${b}`].all)}`),
+        `style separation: ${GRID_SEEDS.length} chromatic seeds × ${MODES.length} modes (auto counted for meanL 0.3 and 0.7) × ${PAIRS.length} pairs = ${total} cases, ${failures.length} below 8`,
+        '  minimum ΔE per pair (worst case)',
+        ...PAIRS.map(([a, b]) => `  ${`${a}/${b}`.padEnd(16)} ${min[`${a}/${b}`].d.toFixed(1).padStart(5)} (${min[`${a}/${b}`].where})`),
       ].join('\n'));
 
       const report = PAIRS.map(([a, b]) => failures.filter(f => f.pair === `${a}/${b}`))

@@ -517,7 +517,11 @@ const quiet = {
       drawSpaced(ctx, ex.dateText.trim(), W - 40, Math.max(30, topY / 2), 1.3, 'right');
     }
 
-    drawCoverCard(ctx, env.cover.source, 40, topY, cs, 6, null, env.k);
+    // When the background is (almost) the cover's own edge colour, the square would dissolve into it;
+    // a faint shadow keeps its outline.
+    const blends = Math.min(okDistance(env.analysis.edges.top, c.bg), okDistance(env.analysis.edges.bottom, c.bg)) < 0.08;
+    const coverShadow = blends ? { color: P.isDark ? 'rgba(0, 0, 0, 0.45)' : withAlpha(P.on, 0.22), blur: 18, y: 6, fill: c.bg } : null;
+    drawCoverCard(ctx, env.cover.source, 40, topY, cs, 6, coverShadow, env.k);
 
     // Vertical title and artist on the right edge, shrunk if they would reach the lyrics.
     const maxV = Math.max(96, lyTop - 36 - topY);

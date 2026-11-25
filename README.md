@@ -82,7 +82,7 @@ node tests/logic.test.mjs
 node tests/blur.test.mjs
 ```
 
-视觉回归需要浏览器：`node server.mjs` 后打开 `http://localhost:8080/tests/visual/`，说明见 `tests/visual/README.md`。
+视觉回归需要浏览器：本地用 `SERVE_TESTS=1 node server.mjs` 启动（PowerShell 写 `$env:SERVE_TESTS=1; node server.mjs`），再打开 `http://localhost:8080/tests/visual/`，说明见 `tests/visual/README.md`。线上部署不要设这个变量，`tests/` 默认不对外提供。
 
 ## 开源协议与致谢
 

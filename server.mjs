@@ -22,6 +22,8 @@ const MIME = {
 };
 
 const BLOCKED_PREFIXES = ['.git', '.github', 'tests', 'tools', 'docs'];
+// Local development only: SERVE_TESTS=1 also serves tests/visual/ (the visual-regression page).
+const SERVE_TESTS = process.env.SERVE_TESTS === '1';
 const BLOCKED_FILES = new Set(['server.mjs', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', '.gitignore']);
 
 function cacheControlFor(rel) {
@@ -58,7 +60,8 @@ const server = http.createServer((req, res) => {
 
   const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const top = rel.split('/')[0];
-  if (BLOCKED_PREFIXES.includes(top) || BLOCKED_FILES.has(rel)) {
+  const testPage = SERVE_TESTS && rel.startsWith('tests/visual/');
+  if (!testPage && (BLOCKED_PREFIXES.includes(top) || BLOCKED_FILES.has(rel))) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end(req.method === 'HEAD' ? '' : 'Not Found');
     return;
