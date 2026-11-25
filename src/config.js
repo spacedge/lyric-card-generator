@@ -9,4 +9,4 @@
 export const FONT_CSS_URL = 'https://fonts.loli.net/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+JP:wght@400;600&family=Noto+Serif+SC:wght@400;600&family=Zen+Maru+Gothic:wght@400;500;700&family=Klee+One:wght@400;600&family=Roboto+Mono:wght@400;500&display=swap';
 
 // 应用版本号。每次发布改一下，同时改 sw.js 里的缓存名（见 README）。
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.4.1';

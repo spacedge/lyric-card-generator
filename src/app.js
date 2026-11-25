@@ -170,7 +170,7 @@ function defaultMeta() {
 const state = defaultState();
 const assets = { cover: null, analysis: null, seeds: [FALLBACK_SEED], customFont: false };
 const meta = defaultMeta();
-const mobileUI = { fullPreview: false, contentExpanded: false };
+const mobileUI = { drawerOpen: true };
 
 const defaults = { source: null, cover: null, analysis: null };
 let coverSource = null;
@@ -190,7 +190,7 @@ function cacheEls() {
   const ids = [
     'pane', 'stage', 'preview', 'statusSize', 'statusWarn', 'statusMsg',
     'miniPreviewBtn', 'miniThumb', 'miniTitle', 'miniSize',
-    'zoomPreviewBtn', 'zoomPreviewLabel',
+    'drawerBar', 'drawerCollapseBtn',
     'focusBar', 'focusHint', 'quickClearFocus',
     'editorPanel', 'ratioSeg', 'tiles', 'tabs', 'mobileNav',
     'coverThumb', 'coverBtn', 'coverInput',
@@ -667,24 +667,21 @@ function previewWidth(aspectHint) {
     return Math.max(160, Math.floor(w));
   }
 
-  // Phone full-screen preview: comfortable full width
-  if (mobileUI.fullPreview) {
-    return Math.max(200, Math.floor(Math.min(stageW, PREVIEW_MAX.phoneFull)));
-  }
-
   // Phone compact mini-preview (hidden main canvas): lightweight render width
   if (document.body.classList.contains('mobile-compact-preview')) {
     return 240;
   }
 
-  // Phone split view: fit cleanly inside upper stage height so whole card is visible without scrolling,
-  // while keeping a legible floor for very tall auto-length lyrics.
-  const stageH = Math.max(160, (els.stage.clientHeight || Math.round(window.innerHeight * 0.34)) - 8);
+  // Phone canvas-first view (adaptive drawer open OR full-screen collapsed):
+  // Fit the entire card cleanly inside stage height so top/bottom never clip;
+  // only clamp to a legible floor on ultra-long lyrics (which scroll from the very top).
+  const stageH = Math.max(120, (els.stage.clientHeight || Math.round(window.innerHeight * 0.48)) - 8);
   const hw = RATIO_HW[ratioFor(state.template, state.ratio)] || aspectHint || (lastRes ? lastRes.height / lastRes.width : 1.5);
   const fitByHeight = stageH / hw;
-  const floorW = Math.min(stageW, 180);
-  const w = Math.min(stageW, Math.max(floorW, fitByHeight));
-  return Math.max(140, Math.floor(w));
+  const minFloor = mobileUI.drawerOpen ? Math.min(stageW, 108) : Math.min(stageW, 172);
+  const maxCap = mobileUI.drawerOpen ? stageW : Math.min(stageW, PREVIEW_MAX.phoneFull);
+  const w = Math.min(maxCap, Math.max(minFloor, fitByHeight));
+  return Math.max(100, Math.floor(w));
 }
 
 function safeGroups() {
@@ -747,10 +744,10 @@ function renderPreview() {
       purpose: 'preview',
     });
 
-    // On phone split view with auto-height, refine cssW once if actual aspect changed significantly
-    if (!desktopMQ.matches && !mobileUI.fullPreview && !document.body.classList.contains('mobile-compact-preview')) {
+    // On phone with auto-height, refine cssW once if actual aspect changed significantly
+    if (!desktopMQ.matches && !document.body.classList.contains('mobile-compact-preview')) {
       const refinedW = previewWidth(res.height / res.width);
-      if (Math.abs(refinedW - cssW) > 6) {
+      if (Math.abs(refinedW - cssW) > 4) {
         cssW = refinedW;
         res = renderCard(els.preview, state, assets, {
           scale: (cssW * dpr) / DESIGN_WIDTH,
@@ -1032,7 +1029,9 @@ function syncNavigation({ scrollPanel = false } = {}) {
   const desktop = desktopMQ.matches;
 
   if (desktop) {
-    document.body.classList.remove('mobile-compact-preview', 'mobile-full-preview');
+    document.body.classList.remove('mobile-compact-preview', 'mobile-drawer-closed');
+    els.editorPanel.classList.remove('dragging-drawer');
+    els.editorPanel.style.transform = '';
     els.panelTemplate.hidden = false;
     for (const b of els.tabBtns) {
       const on = b.dataset.tab === meta.tab;
@@ -1043,7 +1042,7 @@ function syncNavigation({ scrollPanel = false } = {}) {
     return;
   }
 
-  // Phone layout: bottom nav drives which single panel is active
+  // Phone layout: bottom nav drives collapsible adaptive bottom drawer
   const cur = MOBILE_TABS.includes(meta.mobileTab) ? meta.mobileTab : 'content';
   meta.mobileTab = cur;
   els.panelTemplate.hidden = cur !== 'template';
@@ -1051,19 +1050,24 @@ function syncNavigation({ scrollPanel = false } = {}) {
     $(`panel-${name}`).hidden = cur !== name;
   }
   for (const b of els.mobileTabBtns) {
-    const on = b.dataset.mtab === cur;
+    const on = mobileUI.drawerOpen && b.dataset.mtab === cur;
     b.setAttribute('aria-selected', String(on));
   }
 
-  const compact = cur === 'content' && !mobileUI.contentExpanded && !mobileUI.fullPreview;
-  document.body.classList.toggle('mobile-full-preview', mobileUI.fullPreview);
+  const compact = mobileUI.drawerOpen && cur === 'content';
+  document.body.classList.toggle('mobile-drawer-closed', !mobileUI.drawerOpen);
   document.body.classList.toggle('mobile-compact-preview', compact);
 
-  els.zoomPreviewBtn.setAttribute('aria-pressed', String(mobileUI.fullPreview));
-  els.zoomPreviewBtn.setAttribute('aria-label', mobileUI.fullPreview ? '退出全屏预览' : '展开全屏预览');
-  els.zoomPreviewLabel.textContent = mobileUI.fullPreview ? '收起' : '放大';
-
   if (scrollPanel && els.editorPanel) els.editorPanel.scrollTop = 0;
+}
+
+function setMobileDrawer(open) {
+  if (desktopMQ.matches) return;
+  mobileUI.drawerOpen = !!open;
+  els.editorPanel.classList.remove('dragging-drawer');
+  els.editorPanel.style.transform = '';
+  syncNavigation();
+  requestRender();
 }
 
 function selectDesktopTab(name, { save = true } = {}) {
@@ -1074,12 +1078,15 @@ function selectDesktopTab(name, { save = true } = {}) {
   if (save) scheduleSave();
 }
 
-function selectMobileTab(name, { save = true } = {}) {
+function selectMobileTab(name, { save = true, toggle = false } = {}) {
   if (!MOBILE_TABS.includes(name)) name = 'content';
+  if (toggle && mobileUI.drawerOpen && meta.mobileTab === name) {
+    setMobileDrawer(false);
+    return;
+  }
   meta.mobileTab = name;
   if (TABS.includes(name)) meta.tab = name;
-  mobileUI.fullPreview = false;
-  if (name === 'content') mobileUI.contentExpanded = false;
+  mobileUI.drawerOpen = true;
   syncNavigation({ scrollPanel: true });
   requestRender();
   if (save) scheduleSave();
@@ -1302,30 +1309,46 @@ function bindEditor() {
 
   els.mobileNav.addEventListener('click', (e) => {
     const b = e.target.closest('[role="tab"]');
-    if (b) selectMobileTab(b.dataset.mtab);
+    if (b) selectMobileTab(b.dataset.mtab, { toggle: true });
   });
 
-  // 手机端：点击迷你预览条展开预览；点击放大/收起切换全屏预览
-  els.miniPreviewBtn.addEventListener('click', () => {
-    mobileUI.contentExpanded = true;
-    syncNavigation();
-    requestRender();
-  });
-  els.zoomPreviewBtn.addEventListener('click', () => {
-    mobileUI.fullPreview = !mobileUI.fullPreview;
-    syncNavigation();
-    requestRender();
+  // 手机端：点击迷你预览条收起抽屉看完整预览；点击预览区空白背景也可收起抽屉
+  els.miniPreviewBtn.addEventListener('click', () => setMobileDrawer(false));
+  els.stage.addEventListener('click', (e) => {
+    if (!desktopMQ.matches && mobileUI.drawerOpen && e.target === els.stage) {
+      setMobileDrawer(false);
+    }
   });
 
-  // 手机端聚焦内容输入框时自动折叠预览，避免软键盘挤占输入区
-  for (const field of [els.fTitle, els.fArtist, els.fLyrics]) {
-    field.addEventListener('focus', () => {
-      if (!desktopMQ.matches && meta.mobileTab === 'content' && mobileUI.contentExpanded) {
-        mobileUI.contentExpanded = false;
-        syncNavigation();
-      }
-    });
-  }
+  // 手机端抽屉顶栏把手：轻点或下拉收起抽屉
+  let drawerDrag = null;
+  els.drawerBar.addEventListener('pointerdown', (e) => {
+    if (desktopMQ.matches || !mobileUI.drawerOpen || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    drawerDrag = { id: e.pointerId, startY: e.clientY, dy: 0 };
+    els.editorPanel.classList.add('dragging-drawer');
+    try { els.drawerBar.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  });
+  els.drawerBar.addEventListener('pointermove', (e) => {
+    if (!drawerDrag || e.pointerId !== drawerDrag.id) return;
+    const dy = Math.max(0, e.clientY - drawerDrag.startY);
+    drawerDrag.dy = dy;
+    els.editorPanel.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
+  });
+  const endDrawerDrag = (e) => {
+    if (!drawerDrag || e.pointerId !== drawerDrag.id) return;
+    const { dy } = drawerDrag;
+    drawerDrag = null;
+    els.editorPanel.classList.remove('dragging-drawer');
+    els.editorPanel.style.transform = '';
+    if (e.type === 'pointerup' && (dy > 36 || Math.abs(dy) < 8)) {
+      setMobileDrawer(false);
+    }
+  };
+  els.drawerBar.addEventListener('pointerup', endDrawerDrag);
+  els.drawerBar.addEventListener('pointercancel', endDrawerDrag);
+  els.drawerCollapseBtn.addEventListener('click', (e) => {
+    if (e.detail === 0) setMobileDrawer(false);
+  });
 
   // 内容编辑
   els.fTitle.addEventListener('input', () => {
@@ -1799,8 +1822,7 @@ async function resetAll() {
   clearTimeout(saveTimer);
   replaceState(defaultState());
   Object.assign(meta, defaultMeta());
-  mobileUI.fullPreview = false;
-  mobileUI.contentExpanded = false;
+  mobileUI.drawerOpen = true;
   removeUserFont();
   assets.cover = defaults.cover;
   setAnalysis(defaults.analysis);
@@ -1951,6 +1973,7 @@ if (new URLSearchParams(location.search).has('test')) {
     meta,
     ready,
     selectMobileTab,
+    setMobileDrawer,
     loadCoverBlob: (blob) => loadCoverBlob(blob, { user: true, persist: false }),
     rerender: () => renderPreview(),
   };

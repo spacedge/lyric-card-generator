@@ -52,11 +52,6 @@
 
     <div class="preview-stage" id="stage">
       <canvas id="preview" aria-label="歌词卡片预览"></canvas>
-      <button type="button" class="stage-zoom-btn" id="zoomPreviewBtn" aria-pressed="false" aria-label="展开全屏预览">
-        <svg class="icon-expand" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <svg class="icon-collapse" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l6-6M10 14l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span id="zoomPreviewLabel">放大</span>
-      </button>
     </div>
 
     <div class="preview-footer">
@@ -73,6 +68,13 @@
   </section>
 
   <aside class="panel" id="editorPanel" aria-label="设置">
+    <!-- 手机端抽屉顶栏：下滑或轻点收起，看完整预览 -->
+    <div class="drawer-bar" id="drawerBar">
+      <button type="button" class="drawer-handle-btn" id="drawerCollapseBtn" aria-label="收起设置面板，查看完整预览">
+        <span class="drawer-handle" aria-hidden="true"></span>
+      </button>
+    </div>
+
     <!-- 桌面端常驻顶部；手机端对应底部导航的「模板」页 -->
     <section class="card template-card" id="panel-template" aria-label="模板与比例">
       <div class="row-block">
