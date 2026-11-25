@@ -81,6 +81,7 @@
           <button type="button" class="tile" data-t="compact"><canvas width="160" height="200" aria-hidden="true"></canvas><span>紧凑</span></button>
           <button type="button" class="tile" data-t="classic"><canvas width="160" height="200" aria-hidden="true"></canvas><span>经典</span></button>
           <button type="button" class="tile" data-t="immersive"><canvas width="160" height="200" aria-hidden="true"></canvas><span>沉浸</span></button>
+          <button type="button" class="tile" data-t="depth"><canvas width="160" height="200" aria-hidden="true"></canvas><span>景深</span></button>
           <button type="button" class="tile" data-t="quiet"><canvas width="160" height="200" aria-hidden="true"></canvas><span>留白</span></button>
         </div>
       </div>
@@ -92,6 +93,23 @@
           <button type="button" data-v="9:16">9:16</button>
           <button type="button" data-v="1:1">1:1</button>
         </div>
+        <span class="helper" id="ratioHelp" hidden>沉浸和景深以封面画面为背景，没有长图。</span>
+      </div>
+      <div class="row-block" id="blurRow" hidden>
+        <h3 class="label">背景模糊</h3>
+        <div class="seg" role="group" aria-label="背景模糊" id="blurSeg">
+          <button type="button" data-v="light">轻</button>
+          <button type="button" data-v="mid">中</button>
+          <button type="button" data-v="heavy">重</button>
+        </div>
+      </div>
+      <div class="row-block" id="cropRow" hidden>
+        <div class="label label-row">
+          <label for="fCrop">取景</label>
+          <button type="button" class="btn-text btn-compact" id="cropAuto">自动</button>
+        </div>
+        <input type="range" id="fCrop" min="0" max="100" step="1" aria-describedby="cropHelp">
+        <span class="helper" id="cropHelp">默认对准封面的视觉重心。也可以在预览图上左右拖动。</span>
       </div>
     </section>
 
@@ -184,7 +202,7 @@
         <h3 class="label">从封面取的颜色</h3>
         <div class="swatches" id="swatches"></div>
       </div>
-      <div class="row-block">
+      <div class="row-block" id="variantRow">
         <h3 class="label">风格</h3>
         <div class="seg" role="group" aria-label="风格" id="variantSeg">
           <button type="button" data-v="content">忠实</button>
@@ -192,19 +210,17 @@
           <button type="button" data-v="vibrant">鲜明</button>
           <button type="button" data-v="mono">单色</button>
         </div>
+        <span class="helper" id="variantHelp"></span>
       </div>
       <div class="row-block">
         <h3 class="label">明暗</h3>
         <div class="seg" role="group" aria-label="明暗" id="darkSeg">
+          <button type="button" data-v="auto">自动</button>
           <button type="button" data-v="light">浅色</button>
           <button type="button" data-v="dark">深色</button>
         </div>
-        <span class="helper" id="darkHelp" hidden>经典模板的背景直接用选中的颜色，没有明暗之分。</span>
+        <span class="helper" id="darkHelp">自动：暗的封面出深色卡，亮的封面出浅色卡。</span>
       </div>
-      <label class="row-block" for="fScrim" id="scrimRow">
-        <span class="label label-row"><span>背景遮罩</span><output id="scrimOut">50%</output></span>
-        <input type="range" id="fScrim" min="25" max="85" step="5">
-      </label>
       <p class="helper">换封面会重新取色，页面自身配色也会同步跟随。</p>
     </section>
 

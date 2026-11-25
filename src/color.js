@@ -1,5 +1,5 @@
-// 颜色工具：OKLCH / 色调（tone）调色板、Material 3 风格的配色方案、封面取色。
-// 纯逻辑模块：import 时不访问 DOM；只有 extractSeeds 在被调用时才创建 canvas。
+// 颜色工具：OKLCH / 色调（tone）调色板、Material 3 风格的配色方案、封面分析、卡片配色。
+// 纯逻辑模块：import 时不访问 DOM；只有 analyzeCover 在被调用时才创建 canvas。
 
 export const FALLBACK_SEED = '#5DAEE6';
 
@@ -10,7 +10,7 @@ export const FALLBACK_SEED = '#5DAEE6';
 const lin = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 const gam = c => c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055;
 
-// 8 位通道 → 线性值的查找表（取色要处理 9216 个像素）
+// 8 位通道 → 线性值的查找表（封面分析要处理 9216 个像素）
 const LIN_TABLE = Array.from({ length: 256 }, (_, i) => lin(i / 255));
 
 const toDeg = rad => ((rad * 180 / Math.PI) % 360 + 360) % 360;
@@ -206,68 +206,270 @@ export function hueDistance(h1, h2) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 封面取色                                                            */
+/* 色调与明暗                                                          */
 /* ------------------------------------------------------------------ */
 
-const SAMPLE_SIZE = 96;
-const HUE_BUCKETS = 36;          // 每桶 10°
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /**
- * 纯像素分析：rgba 是 RGBA 字节数组（Uint8ClampedArray / Uint8Array）。
- * 返回 { seeds: hex[1..4], light: hex|null }。
- *
- * - 总像素 = alpha ≥ 200 的像素数（透明像素不参与任何统计）。
- * - 浅色墨水：OKLab L > 0.86 且 C < 0.08 的像素占比 ≥ 2% 时，取它们 sRGB 的平均色。
- * - 种子：C ≥ 0.035 且 0.12 ≤ L ≤ 0.97 的像素按色相分桶；桶得分 =
- *   prop×70 + (ch−48)×(ch<48 ? 0.1 : 0.3)，prop 为本桶加左右邻桶的占比，ch = 平均彩度×330。
- *   本桶占比 ≥ 0.5% 且 prop ≥ 1% 才有资格；按得分取色相互距 ≥ 30° 的最多 4 个。
+ * 颜色的色调：CIELAB L*（0–100），与 palette() / toneHex() 的色调同一标尺。
+ * 灰色两者完全一致；有彩色时 toneHex 的色调是近似值，量出来的 L* 最多差几个点。
+ * @param {string} hex '#RRGGBB'
+ * @returns {number}
  */
-export function seedsFromPixels(rgba) {
-  const buckets = Array.from({ length: HUE_BUCKETS }, () => ({ n: 0, L: 0, a: 0, b: 0, C: 0 }));
-  let total = 0, lightN = 0, lightR = 0, lightG = 0, lightB = 0;
+export function toneOf(hex) {
+  const Y = luminance(hex);
+  return Y > 0.008856 ? 116 * Math.cbrt(Y) - 16 : 903.3 * Y;
+}
 
-  for (let i = 0; i + 3 < rgba.length; i += 4) {
-    if (rgba[i + 3] < 200) continue;
-    total++;
-    const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
-    const [L, a, bb] = rgbToOklab(r, g, b);
-    const C = Math.hypot(a, bb);
+/**
+ * 卡片用深色还是浅色背景。'dark' → true，'light' → false，
+ * 'auto'（以及 undefined 等其它值）→ 跟随封面平均亮度：meanL < 0.5 用深色。
+ * @param {'auto'|'light'|'dark'|undefined} mode
+ * @param {number} meanL 封面的 OKLab 平均亮度，0–1
+ * @returns {boolean}
+ */
+export function resolveDark(mode, meanL) {
+  if (mode === 'dark') return true;
+  if (mode === 'light') return false;
+  return meanL < 0.5;
+}
 
-    if (L > 0.86 && C < 0.08) {
-      lightN++; lightR += r; lightG += g; lightB += b;
-    }
-    if (C >= 0.035 && L >= 0.12 && L <= 0.97) {
-      const bucket = buckets[Math.floor(toDeg(Math.atan2(bb, a)) / 10) % HUE_BUCKETS];
-      bucket.n++; bucket.L += L; bucket.a += a; bucket.b += bb; bucket.C += C;
-    }
+/* ------------------------------------------------------------------ */
+/* 封面分析：色板、强调色、平均亮度、视觉重心、上下边缘色              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @typedef {object} Swatch 封面里的一块真实颜色（聚类中心，不是色相桶的平均）
+ * @property {string} hex    '#RRGGBB'
+ * @property {number} L      OKLab 亮度 0–1
+ * @property {number} C      OKLab 彩度
+ * @property {number} H      色相角度 0–360
+ * @property {number} share  占有效像素的比例 0–1
+ * @property {'base'|'accent'|'vivid'|'neutral'} role
+ *   base 面积最大的颜色（可以是黑、白、灰）；accent 最醒目且与 base 明显不同的颜色；
+ *   vivid 其它有彩色；neutral 与 base 明显不同的大块无彩色（蓝封面上的奶白人物、白色边框）
+ */
+
+/**
+ * @typedef {object} CoverAnalysis
+ * @property {Swatch[]} swatches 1–6 个，swatches[0] 是 base
+ * @property {number} defaultIndex 应用默认选中的色块下标
+ * @property {string|null} accent '#RRGGBB'；封面上没有可作强调色的颜色时为 null
+ * @property {number} meanL 封面的 OKLab 平均亮度 0–1
+ * @property {{x: number, y: number}} focus 视觉重心，各 0–1
+ * @property {{top: string, bottom: string}} edges 上、下各 6% 行的平均颜色
+ */
+
+const SAMPLE_SIZE = 96;
+const OPAQUE_ALPHA = 200;       // alpha 低于它的像素不参与任何统计
+const MAX_CLUSTERS = 12;
+const SEED_STOP_DIST = 0.03;    // 最远的像素离已有聚类中心不足这个距离就不再增加聚类
+const KMEANS_ITERATIONS = 10;
+const MERGE_DIST = 0.05;        // 距离小于它的两个聚类合并
+const VIVID_CHROMA = 0.04;      // 彩度不低于它算有彩色
+const VIVID_SHARE = 0.006;
+const ACCENT_MIN_DIST = 0.15;   // 强调色与 base 的最小距离
+const SWATCH_MIN_DIST = 0.12;   // 色块之间的最小距离
+const MAX_SWATCHES = 6;
+const NEUTRAL_SHARE = 0.05;
+const NEUTRAL_MIN_DIST = 0.25;  // 无彩色块与 base 的最小距离
+const EDGE_FRACTION = 0.06;     // 上下边缘色、视觉重心的边缘降权都用 6%
+
+const labDist2 = (p, q) => (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2;
+const labDist = (p, q) => Math.sqrt(labDist2(p, q));
+
+/** 封面解析失败时的分析结果：只有一个 FALLBACK_SEED 色块。每次返回新对象。 */
+function fallbackAnalysis() {
+  const { L, C, H } = hexToOklch(FALLBACK_SEED);
+  return {
+    swatches: [{ hex: FALLBACK_SEED, L, C, H, share: 1, role: 'base' }],
+    defaultIndex: 0,
+    accent: null,
+    meanL: 0.5,
+    focus: { x: 0.5, y: 0.5 },
+    edges: { top: FALLBACK_SEED, bottom: FALLBACK_SEED },
+  };
+}
+
+/**
+ * OKLab 空间里的 k-means。用最远点选种子，所以面积很小但颜色很不同的东西
+ * （黑底上的金色头盔）也会有自己的聚类。返回按面积从大到小排列的聚类。
+ * @param {number[][]} labs 有效像素的 [L, a, b]
+ * @returns {{lab: number[], share: number}[]}
+ */
+function clusterColours(labs) {
+  const mean = [0, 1, 2].map(k => labs.reduce((sum, p) => sum + p[k], 0) / labs.length);
+  let centres = [mean];
+  const nearest = labs.map(p => labDist2(p, mean));
+  while (centres.length < MAX_CLUSTERS) {
+    let far = 0;
+    for (let i = 1; i < labs.length; i++) if (nearest[i] > nearest[far]) far = i;
+    if (nearest[far] < SEED_STOP_DIST ** 2) break;
+    centres.push(labs[far].slice());
+    for (let i = 0; i < labs.length; i++) nearest[i] = Math.min(nearest[i], labDist2(labs[i], labs[far]));
   }
-  if (total === 0) return { seeds: [FALLBACK_SEED], light: null };
 
-  const light = lightN / total >= 0.02
-    ? rgbToHex([lightR / lightN, lightG / lightN, lightB / lightN])
-    : null;
-
-  const candidates = [];
-  buckets.forEach((bk, i) => {
-    if (bk.n / total < 0.005) return;
-    const prop = (bk.n + buckets[(i + HUE_BUCKETS - 1) % HUE_BUCKETS].n + buckets[(i + 1) % HUE_BUCKETS].n) / total;
-    if (prop < 0.01) return;
-    const ch = bk.C / bk.n * 330;
-    const L = bk.L / bk.n, a = bk.a / bk.n, b = bk.b / bk.n;
-    candidates.push({
-      score: prop * 70 + (ch - 48) * (ch < 48 ? 0.1 : 0.3),
-      hue: toDeg(Math.atan2(b, a)),
-      hex: linearToHex(oklabToLinear(L, a, b)),
+  const assign = new Int16Array(labs.length);
+  for (let iter = 0; iter < KMEANS_ITERATIONS; iter++) {
+    const sums = centres.map(() => [0, 0, 0, 0]);
+    labs.forEach((p, i) => {
+      let best = 0, bestD = Infinity;
+      centres.forEach((c, j) => {
+        const d = labDist2(p, c);
+        if (d < bestD) { bestD = d; best = j; }
+      });
+      assign[i] = best;
+      const s = sums[best];
+      s[0] += p[0]; s[1] += p[1]; s[2] += p[2]; s[3]++;
     });
-  });
-  candidates.sort((x, y) => y.score - x.score);
-
-  const picked = [];
-  for (const c of candidates) {
-    if (picked.length === 4) break;
-    if (picked.every(p => hueDistance(p.hue, c.hue) >= 30)) picked.push(c);
+    centres = centres.map((c, j) => {
+      const [l, a, b, n] = sums[j];
+      return n ? [l / n, a / n, b / n] : c;
+    });
   }
-  return { seeds: picked.length ? picked.map(p => p.hex) : [FALLBACK_SEED], light };
+
+  const clusters = centres.map(lab => ({ lab, n: 0 }));
+  for (const j of assign) clusters[j].n++;
+  const alive = clusters.filter(c => c.n > 0);
+
+  // 合并过近的聚类（按面积加权），每合并一次从头再找
+  for (let pair = findCloseClusters(alive); pair; pair = findCloseClusters(alive)) {
+    const [i, j] = pair;
+    const a = alive[i], b = alive[j], n = a.n + b.n;
+    a.lab = a.lab.map((v, k) => (v * a.n + b.lab[k] * b.n) / n);
+    a.n = n;
+    alive.splice(j, 1);
+  }
+  return alive
+    .map(c => ({ lab: c.lab, share: c.n / labs.length }))
+    .sort((p, q) => q.share - p.share);
+}
+
+/** 第一对距离小于 MERGE_DIST 的聚类下标 [i, j]，没有则 null。 */
+function findCloseClusters(clusters) {
+  for (let i = 0; i < clusters.length; i++) {
+    for (let j = i + 1; j < clusters.length; j++) {
+      if (labDist(clusters[i].lab, clusters[j].lab) < MERGE_DIST) return [i, j];
+    }
+  }
+  return null;
+}
+
+/**
+ * 视觉重心：每个像素的权重 = 2×与 7×7 邻域平均亮度之差（局部对比）
+ * + 与整张图平均 a/b 的距离（颜色与众不同）+ 0.6×与整张图平均亮度之差；
+ * 离边框 6% 以内的像素权重 ×0.3。只取权重最高的 10% 做加权平均。
+ * @param {(number[]|null)[]} labs 按像素顺序，透明像素为 null
+ * @returns {{x: number, y: number}} 各 0–1；整张图没有任何起伏时返回正中
+ */
+function visualFocus(labs, size, meanL) {
+  const opaque = labs.filter(Boolean);
+  const meanA = opaque.reduce((sum, p) => sum + p[1], 0) / opaque.length;
+  const meanB = opaque.reduce((sum, p) => sum + p[2], 0) / opaque.length;
+
+  const weights = new Float64Array(labs.length);
+  for (let i = 0; i < labs.length; i++) {
+    const lab = labs[i];
+    if (!lab) continue;
+    const x = i % size, y = (i - x) / size;
+    let sum = 0, count = 0;
+    for (let yy = Math.max(0, y - 3); yy <= Math.min(size - 1, y + 3); yy++) {
+      for (let xx = Math.max(0, x - 3); xx <= Math.min(size - 1, x + 3); xx++) {
+        const near = labs[yy * size + xx];
+        if (near) { sum += near[0]; count++; }
+      }
+    }
+    const fx = (x + 0.5) / size, fy = (y + 0.5) / size;
+    const border = Math.min(fx, 1 - fx, fy, 1 - fy) < EDGE_FRACTION ? 0.3 : 1;
+    weights[i] = border * (
+      2 * Math.abs(lab[0] - sum / count)
+      + Math.hypot(lab[1] - meanA, lab[2] - meanB)
+      + 0.6 * Math.abs(lab[0] - meanL)
+    );
+  }
+
+  const sorted = weights.filter((_, i) => labs[i]).sort().reverse();
+  const cut = sorted[Math.floor(sorted.length * 0.1)];
+  let wx = 0, wy = 0, total = 0;
+  for (let i = 0; i < labs.length; i++) {
+    if (!labs[i] || weights[i] < cut) continue;
+    wx += weights[i] * ((i % size) + 0.5) / size;
+    wy += weights[i] * (Math.floor(i / size) + 0.5) / size;
+    total += weights[i];
+  }
+  return total > 1e-9 ? { x: wx / total, y: wy / total } : { x: 0.5, y: 0.5 };
+}
+
+/** 若干行（半开区间 [row0, row1)）里有效像素的平均 sRGB；一个有效像素都没有时返回 fallbackHex。 */
+function meanRowsHex(rgba, size, row0, row1, fallbackHex) {
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = row0 * size; i < row1 * size; i++) {
+    if (rgba[i * 4 + 3] < OPAQUE_ALPHA) continue;
+    r += rgba[i * 4]; g += rgba[i * 4 + 1]; b += rgba[i * 4 + 2]; n++;
+  }
+  return n ? rgbToHex([r / n, g / n, b / n]) : fallbackHex;
+}
+
+/**
+ * 纯像素分析（确定性：同样的像素永远得到同样的结果）。
+ * 把封面聚成几块真实的颜色，选出 base（面积最大）、accent（最醒目且与 base 明显不同）
+ * 和最多 6 个供选择的色块，再算平均亮度、视觉重心和上下边缘色。
+ * alpha < 200 的像素不参与任何统计；没有任何有效像素时返回 fallback 分析。
+ *
+ * defaultIndex 为 1 的条件：base 是无彩色，且不是「底」（L < 0.25 或 > 0.92 且占 ≥ 25%
+ * 的纯黑 / 纯白底），有彩色合计占 ≥ 20%，并且有第二个色块；否则为 0。
+ * @param {Uint8ClampedArray|Uint8Array} rgba size×size 的 RGBA 字节
+ * @param {number} size 边长（像素）
+ * @returns {CoverAnalysis}
+ */
+export function analyzePixels(rgba, size) {
+  const labs = Array.from({ length: size * size }, (_, i) => (
+    rgba[i * 4 + 3] >= OPAQUE_ALPHA ? rgbToOklab(rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]) : null
+  ));
+  const opaque = labs.filter(Boolean);
+  if (opaque.length === 0) return fallbackAnalysis();
+
+  const clusters = clusterColours(opaque).map(({ lab, share }) => ({
+    lab, share, hex: linearToHex(oklabToLinear(...lab)),
+    L: lab[0], C: Math.hypot(lab[1], lab[2]), H: toDeg(Math.atan2(lab[2], lab[1])),
+  }));
+  const base = clusters[0];
+  const score = c => Math.sqrt(c.share) * c.C * 100;
+  const vivid = clusters
+    .filter(c => c.C >= VIVID_CHROMA && c.share >= VIVID_SHARE)
+    .sort((p, q) => score(q) - score(p));
+  const accent = vivid.find(c => labDist(c.lab, base.lab) >= ACCENT_MIN_DIST) ?? null;
+
+  const picked = [{ cluster: base, role: 'base' }];
+  const add = (cluster, role) => {
+    if (picked.length < MAX_SWATCHES && picked.every(p => labDist(p.cluster.lab, cluster.lab) >= SWATCH_MIN_DIST)) {
+      picked.push({ cluster, role });
+    }
+  };
+  for (const c of vivid) add(c, c === accent ? 'accent' : 'vivid');
+  for (const c of clusters) {
+    if (c.C < VIVID_CHROMA && c.share >= NEUTRAL_SHARE && labDist(c.lab, base.lab) >= NEUTRAL_MIN_DIST) add(c, 'neutral');
+  }
+  const swatches = picked.map(({ cluster: c, role }) => ({ hex: c.hex, L: c.L, C: c.C, H: c.H, share: c.share, role }));
+
+  const vividShare = vivid.reduce((sum, c) => sum + c.share, 0);
+  const isGround = (base.L < 0.25 || base.L > 0.92) && base.share >= 0.25;
+  const defaultIndex = base.C < VIVID_CHROMA && !isGround && vividShare >= 0.2 && swatches.length > 1 ? 1 : 0;
+
+  const meanL = opaque.reduce((sum, p) => sum + p[0], 0) / opaque.length;
+  const edgeRows = Math.max(1, Math.round(size * EDGE_FRACTION));
+  return {
+    swatches,
+    defaultIndex,
+    accent: accent ? accent.hex : null,
+    meanL,
+    focus: visualFocus(labs, size, meanL),
+    edges: {
+      top: meanRowsHex(rgba, size, 0, edgeRows, base.hex),
+      bottom: meanRowsHex(rgba, size, size - edgeRows, size, base.hex),
+    },
+  };
 }
 
 function makeSampleCanvas() {
@@ -288,11 +490,14 @@ function sourceSize(source) {
 }
 
 /**
- * 从封面取种子色。source 可以是 HTMLImageElement / HTMLCanvasElement / ImageBitmap 等 CanvasImageSource。
- * 先把封面按 object-fit: cover 居中裁成正方形，画到 96×96 再交给 seedsFromPixels。
- * 画布不可用、图片未加载或 getImageData 抛错（如跨域污染）时返回 { seeds: [FALLBACK_SEED], light: null }。
+ * 分析封面。source 可以是 HTMLImageElement / HTMLCanvasElement / ImageBitmap / OffscreenCanvas 等
+ * CanvasImageSource：先按 object-fit: cover 居中裁成正方形，画到 96×96，再交给 analyzePixels。
+ * 画布不可用、图片未加载、尺寸为 0 或 getImageData 抛错（如跨域污染）时不抛错，返回 fallback 分析
+ * （一个 FALLBACK_SEED 色块，accent null，meanL 0.5，重心居中，上下边缘色都是 FALLBACK_SEED）。
+ * @param {CanvasImageSource} source
+ * @returns {CoverAnalysis}
  */
-export function extractSeeds(source) {
+export function analyzeCover(source) {
   try {
     const [sw, sh] = sourceSize(source);
     if (!(sw > 0 && sh > 0)) throw new Error('source has no size');
@@ -300,8 +505,102 @@ export function extractSeeds(source) {
     const side = Math.min(sw, sh);             // 目标是正方形：cover 居中裁切就是取中间的正方形
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(source, (sw - side) / 2, (sh - side) / 2, side, side, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    return seedsFromPixels(ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data);
+    return analyzePixels(ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data, SAMPLE_SIZE);
   } catch {
-    return { seeds: [FALLBACK_SEED], light: null };
+    return fallbackAnalysis();
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 卡片配色                                                            */
+/* ------------------------------------------------------------------ */
+
+/** 鲜明：这个色相彩度最高的色调（黄偏亮、蓝偏暗），再朝要求的明暗方向挪，只要彩度还有峰值的 85%。 */
+function vibrantBackground(src, dark) {
+  const pal = palette(src.H, 0.4);
+  const chromaAt = tone => hexToOklch(pal(tone)).C;
+  let peakTone = 50, peakChroma = 0;
+  for (let t = 26; t <= 76; t += 2) {
+    const c = chromaAt(t);
+    if (c > peakChroma) { peakChroma = c; peakTone = t; }
+  }
+  const step = dark ? -2 : 2;
+  let tone = peakTone;
+  while (tone + step >= 26 && tone + step <= 76 && chromaAt(tone + step) >= peakChroma * 0.85) tone += step;
+  return pal(tone);
+}
+
+/** 四种风格的背景色，见 cardPalette。forced：用户固定了浅色 / 深色（不是跟随封面）。 */
+function cardBackground({ seed, accent, style, dark, forced }) {
+  const s = hexToOklch(seed);
+  const T0 = toneOf(seed);
+  const seedAdj = s.C > 0.22 ? palette(s.H, 0.2)(T0) : seed;       // 荧光色压到彩度 0.2，色调不变
+
+  switch (style) {
+    case 'tonal':
+      return palette(s.H, clamp(s.C * 0.45, 0.02, 0.05))(dark ? 16 : 88);
+    case 'vibrant': {
+      const src = s.C < VIVID_CHROMA && accent ? hexToOklch(accent) : s;
+      if (src.C < VIVID_CHROMA) return dark ? '#000000' : '#FFFFFF';   // 封面没有任何有彩色：纯黑 / 纯白
+      return vibrantBackground(src, dark);
+    }
+    case 'mono':
+      return palette(0, 0)(dark ? 8 : 97);
+    default:                                                         // 'content'
+      if (!forced || (dark ? T0 <= 32 : T0 >= 72)) return seedAdj;
+      return palette(s.H, Math.min(s.C, 0.2))(dark ? 26 : 76);
+  }
+}
+
+/**
+ * @typedef {object} CardPalette 所有模板共用的一套卡片颜色
+ * @property {string} bg        背景
+ * @property {string} container 比背景略深（浅色）/ 略亮（深色）的容器色
+ * @property {string} on        正文色，对 bg 对比度 ≥ 7；中间调背景黑白都够不到 7 时，取黑 / 白能达到的最大值
+ * @property {string} onVar     次要文字色，对 bg 对比度 ≥ 4.5
+ * @property {string} accent    强调色，对 bg 对比度 ≥ 4.5
+ * @property {boolean} isDark   背景是否深色（按对比度判断，与 mode 无关）
+ * @property {string} track     进度条轨道等：on 的 16% 透明度，'rgba(...)'
+ * @property {string} shadow    阴影：深色 'rgba(0, 0, 0, 0.5)'，浅色 on 的 25% 透明度
+ */
+
+/**
+ * 由种子色算出一张卡片的全部颜色。风格直接决定背景：
+ * - content 忠实：封面自己的颜色（荧光色压到彩度 0.2）。mode 为 'auto' 时不改色调；
+ *   固定浅色 / 深色时，种子色色调不合适（浅色 < 72、深色 > 32）就换成同色相的 76 / 26 色调。
+ * - tonal 柔和：同色相、低彩度（0.02–0.05）、很浅（88）或很深（16）。
+ * - vibrant 鲜明：最鲜艳的色相满彩度；种子色是无彩色时用 accent 的色相，都没有则纯黑 / 纯白。
+ * - mono 单色：纯灰（97 / 8）；accent 仍是卡片上唯一的颜色。
+ * 文字色、容器色、强调色都由背景推出，并保证对比度。
+ * @param {object} args
+ * @param {string} args.seed '#RRGGBB'，当前选中的色块或自定义颜色
+ * @param {string|null} [args.accent] 封面强调色
+ * @param {'content'|'tonal'|'vibrant'|'mono'} [args.style] 未知值按 'content'
+ * @param {'auto'|'light'|'dark'} [args.mode] 'auto' 用 meanL 决定明暗
+ * @param {number} [args.meanL] 封面平均亮度，mode 为 'auto' 时用
+ * @returns {CardPalette}
+ */
+export function cardPalette({ seed, accent = null, style = 'content', mode = 'auto', meanL = 0.5 }) {
+  const dark = resolveDark(mode, meanL);
+  const bg = cardBackground({ seed, accent, style, dark, forced: mode === 'light' || mode === 'dark' });
+
+  const b = hexToOklch(bg);
+  const isDark = contrast(bg, '#FFFFFF') >= contrast(bg, '#000000');   // 用纯黑比：#111 会让 L* 50 附近的背景选白字，白字达不到 4.5
+  const dir = isDark ? 1 : -1;
+  const on = ensureContrast(palette(b.H, Math.min(b.C * 0.25, 0.025)), isDark ? 97 : 12, bg, 7, dir);
+  const onVar = ensureContrast(palette(b.H, Math.min(Math.max(b.C * 0.5, 0.02), 0.08)), isDark ? 80 : 35, bg, 4.5, dir);
+  const container = palette(b.H, b.C * 0.9)(clamp(toneOf(bg) + (isDark ? 8 : -6), 4, 98));
+
+  // 强调色：用封面的 accent；它和背景色相太近（背景有彩色时）或没有 accent，就换成背景的补色方向
+  let a = accent ? hexToOklch(accent) : null;
+  if (!a || (b.C >= VIVID_CHROMA && hueDistance(a.H, b.H) < 40)) {
+    a = { H: (b.H + 175) % 360, C: clamp(b.C * 0.6, 0.06, 0.12) };
+  }
+  const accentHex = ensureContrast(palette(a.H, Math.max(a.C, 0.06)), isDark ? 86 : 38, bg, 4.5, dir);
+
+  return {
+    bg, container, on, onVar, accent: accentHex, isDark,
+    track: withAlpha(on, 0.16),
+    shadow: isDark ? 'rgba(0, 0, 0, 0.5)' : withAlpha(on, 0.25),
+  };
 }

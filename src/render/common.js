@@ -215,73 +215,10 @@ export function drawVertical(ctx, text, cx, y, size, spacingEm) {
   }
 }
 
-// ---- film grain, deterministic so preview and export match ----
-let grainTile = null;
-function makeGrain() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d');
-  const img = g.createImageData(128, 128);
-  let seed = 0x9e3779b9;
-  const rnd = () => {
-    seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = Math.round(rnd() * 255);
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  g.putImageData(img, 0, 0);
-  return c;
-}
-export function drawGrain(ctx, w, h, k, alpha) {
-  if (!grainTile) grainTile = makeGrain();
-  const pat = ctx.createPattern(grainTile, 'repeat');
-  if (!pat) return;
-  if (pat.setTransform && typeof DOMMatrix !== 'undefined') pat.setTransform(new DOMMatrix().scale(1 / k * 1.5));
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.globalCompositeOperation = 'overlay';
-  ctx.fillStyle = pat;
-  ctx.fillRect(0, 0, w, h);
-  ctx.restore();
-}
-
-// ---- blurred cover for the 沉浸 background ----
-const SUPPORTS_FILTER = typeof CanvasRenderingContext2D !== 'undefined' && 'filter' in CanvasRenderingContext2D.prototype;
 function canvasOf(size) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
   return c;
-}
-export function makeBlurred(src) {
-  const base = canvasOf(256);
-  drawCoverFit(base.getContext('2d'), src, 0, 0, 256, 256);
-  let cur = base, size = 256;
-  while (size > 16) {
-    size = Math.max(16, size >> 1);
-    const n = canvasOf(size), c = n.getContext('2d');
-    c.imageSmoothingQuality = 'high';
-    c.drawImage(cur, 0, 0, size, size);
-    cur = n;
-  }
-  while (size < 256) {
-    size = Math.min(256, size * 2);
-    const n = canvasOf(size), c = n.getContext('2d');
-    c.imageSmoothingQuality = 'high';
-    c.drawImage(cur, 0, 0, size, size);
-    cur = n;
-  }
-  if (SUPPORTS_FILTER) {
-    const n = canvasOf(256), c = n.getContext('2d');
-    c.filter = 'blur(8px) saturate(1.25)';
-    c.drawImage(cur, -24, -24, 304, 304);
-    cur = n;
-  }
-  return cur;
 }
 
 /** 1080×1080 sample cover: night-blue sky, a moon, a lone pole and wires. */

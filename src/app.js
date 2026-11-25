@@ -4,10 +4,10 @@
  */
 import { FONT_CSS_URL, APP_VERSION } from './config.js';
 import * as store from './storage.js';
-import { FALLBACK_SEED, makeScheme, extractSeeds } from './color.js';
+import { FALLBACK_SEED, makeScheme, analyzeCover } from './color.js';
 import {
-  TEMPLATE_INFO, TEMPLATE_ORDER, FONT_PRESETS, DESIGN_WIDTH,
-  makeDefaultCover, prepareCover, renderCard, fontsToLoad, groupsOf,
+  TEMPLATE_INFO, TEMPLATE_ORDER, FONT_PRESETS, DESIGN_WIDTH, BLUR_LEVELS,
+  makeDefaultCover, prepareCover, renderCard, fontsToLoad, groupsOf, ratioFor, modeOf, fallbackAnalysis,
 } from './render/index.js';
 
 /* ====================================================================
@@ -17,6 +17,8 @@ import {
 const PARSE_MODES = ['bilingual', 'blocks', 'single'];
 const VARIANTS = ['content', 'tonal', 'vibrant', 'mono'];
 const RATIOS = ['auto', '4:5', '9:16', '1:1'];
+const DARK_MODES = ['auto', 'light', 'dark'];
+const DRAG_SLOP = 6;   // px a pointer may move before a tap on the preview becomes a drag
 const ALIGNS = ['left', 'center'];
 const TABS = ['content', 'color', 'type', 'extra'];
 const MOBILE_TABS = ['content', 'template', 'color', 'type', 'extra'];
@@ -52,6 +54,19 @@ const THEME_TOKENS = [
   ['--outline', 'outline'], ['--outline-variant', 'outlineVariant'],
   ['--inverse-surface', 'inverseSurface'], ['--inverse-on-surface', 'inverseOnSurface'], ['--inverse-primary', 'inversePrimary'],
 ];
+
+const VARIANT_HELP = {
+  content: '用封面里选中的颜色本身。',
+  tonal: '同一色相，颜色调淡，偏浅或偏深。',
+  vibrant: '这个色相最鲜艳的一档，像海报。',
+  mono: '灰色背景，只有重点句保留封面的强调色。',
+};
+const NO_STYLE_HELP = '沉浸和景深直接用封面画面当背景，没有风格之分。';
+const DARK_HELP = {
+  auto: '自动：暗的封面出深色卡，亮的封面出浅色卡。',
+  light: '固定出浅色卡。',
+  dark: '固定出深色卡。',
+};
 
 const MODE_HELP = {
   bilingual: '一行原文、一行译文交替排列；最后单出来的一行只当原文。',
@@ -123,13 +138,14 @@ function defaultState() {
     focus: [],
     seed: FALLBACK_SEED,
     variant: 'content',
-    dark: { compact: true, classic: false, immersive: true, quiet: false },
+    dark: Object.fromEntries(TEMPLATE_ORDER.map((t) => [t, 'auto'])),
+    blur: { immersive: 'mid', depth: 'mid' },
+    depthX: null,
     font: 'sans',
     scale: 1,
     align: 'left',
     showTrans: true,
     ratio: TEMPLATE_INFO.compact.defaultRatio,
-    scrim: 0.5,
     extras: {
       date: false, dateText: todayText(),
       note: false, noteText: '',
@@ -150,11 +166,11 @@ function defaultMeta() {
 }
 
 const state = defaultState();
-const assets = { cover: null, seeds: [FALLBACK_SEED], light: null, customFont: false };
+const assets = { cover: null, analysis: null, seeds: [FALLBACK_SEED], customFont: false };
 const meta = defaultMeta();
 const mobileUI = { fullPreview: false, contentExpanded: false };
 
-const defaults = { source: null, cover: null, seeds: [FALLBACK_SEED], light: null };
+const defaults = { source: null, cover: null, analysis: null };
 let coverSource = null;
 
 function replaceState(next) {
@@ -178,7 +194,8 @@ function cacheEls() {
     'coverThumb', 'coverBtn', 'coverInput',
     'fTitle', 'fArtist', 'fLyrics', 'pasteLyricsBtn', 'clearLyricsBtn',
     'modeSeg', 'modeHelp', 'focusDisclosure', 'focusBadge', 'pickList', 'pickClear',
-    'swatches', 'variantSeg', 'darkSeg', 'darkHelp', 'scrimRow', 'fScrim', 'scrimOut',
+    'swatches', 'variantRow', 'variantSeg', 'variantHelp', 'darkSeg', 'darkHelp',
+    'ratioHelp', 'blurRow', 'blurSeg', 'cropRow', 'fCrop', 'cropAuto',
     'fontChips', 'customChip', 'fontBtn', 'fontInput', 'fontHelp',
     'fScale', 'scaleOut', 'scaleReset', 'alignSeg', 'swTrans',
     'resetBtn', 'exportBtn',
@@ -268,14 +285,18 @@ function applySaved(saved) {
     if (isHex(s.seed)) { state.seed = s.seed.toUpperCase(); result.seed = true; }
     if (VARIANTS.includes(s.variant)) state.variant = s.variant;
     if (isPlain(s.dark)) {
-      for (const t of TEMPLATE_ORDER) if (typeof s.dark[t] === 'boolean') state.dark[t] = s.dark[t];
+      // older saves stored booleans; modeOf maps them to 'dark' / 'light'
+      for (const t of TEMPLATE_ORDER) if (has(s.dark, t)) state.dark[t] = modeOf(s.dark[t]);
     }
+    if (isPlain(s.blur)) {
+      for (const t of ['immersive', 'depth']) if (BLUR_LEVELS.includes(s.blur[t])) state.blur[t] = s.blur[t];
+    }
+    if (typeof s.depthX === 'number' && Number.isFinite(s.depthX)) state.depthX = clamp(s.depthX, 0, 1);
     if (typeof s.font === 'string' && has(FONT_PRESETS, s.font)) state.font = s.font;
     if (typeof s.scale === 'number' && Number.isFinite(s.scale)) state.scale = clamp(s.scale, 0.8, 1.3);
     if (ALIGNS.includes(s.align)) state.align = s.align;
     if (typeof s.showTrans === 'boolean') state.showTrans = s.showTrans;
     if (RATIOS.includes(s.ratio)) state.ratio = s.ratio;
-    if (typeof s.scrim === 'number' && Number.isFinite(s.scrim)) state.scrim = clamp(s.scrim, 0.25, 0.85);
     if (isPlain(s.extras)) {
       for (const k of EXTRA_KEYS) if (typeof s.extras[k] === 'boolean') state.extras[k] = s.extras[k];
       for (const [k, max] of Object.entries(EXTRA_TEXT)) {
@@ -410,6 +431,13 @@ function drawCoverThumb(source) {
   }
 }
 
+/** Swatch colours and the rest of the cover analysis; a broken analysis falls back to the default seed. */
+function setAnalysis(found) {
+  const ok = found && Array.isArray(found.swatches) && found.swatches.length;
+  assets.analysis = ok ? found : fallbackAnalysis();
+  assets.seeds = assets.analysis.swatches.map((s) => String(s.hex).toUpperCase());
+}
+
 async function loadCoverBlob(blob, opts = {}) {
   const { user = true, persist = true, keepSeed = false } = opts;
   if (!blob || (blob.type && !blob.type.startsWith('image/'))) {
@@ -431,7 +459,7 @@ async function loadCoverBlob(blob, opts = {}) {
   let found;
   try {
     prepared = prepareCover(src);
-    found = extractSeeds(src);
+    found = analyzeCover(src);
   } catch (err) {
     console.error('[歌词卡片] 封面处理失败', err);
     if (user) toast('封面处理失败，请换一张小一点的图片。', true);
@@ -439,10 +467,12 @@ async function loadCoverBlob(blob, opts = {}) {
   }
 
   assets.cover = prepared;
-  assets.seeds = found && Array.isArray(found.seeds) && found.seeds.length ? found.seeds : [FALLBACK_SEED];
-  assets.light = (found && found.light) || null;
+  setAnalysis(found);
   coverSource = src;
-  if (!keepSeed) state.seed = assets.seeds[0];
+  if (!keepSeed) {
+    state.seed = assets.seeds[assets.analysis.defaultIndex] || assets.seeds[0];
+    state.depthX = null;
+  }
 
   drawCoverThumb(src);
   buildSwatches();
@@ -626,7 +656,7 @@ function previewWidth(aspectHint) {
 
   if (desktop) {
     let w = Math.min(stageW, PREVIEW_MAX.desktop);
-    const hw = RATIO_HW[state.ratio];
+    const hw = RATIO_HW[ratioFor(state.template, state.ratio)];
     if (hw) {
       const maxH = desktopStageMaxHeight();
       if (maxH > 0) w = Math.min(w, Math.max(200, maxH / hw));
@@ -647,7 +677,7 @@ function previewWidth(aspectHint) {
   // Phone split view: fit cleanly inside upper stage height so whole card is visible without scrolling,
   // while keeping a legible floor for very tall auto-length lyrics.
   const stageH = Math.max(160, (els.stage.clientHeight || Math.round(window.innerHeight * 0.34)) - 8);
-  const hw = RATIO_HW[state.ratio] || aspectHint || (lastRes ? lastRes.height / lastRes.width : 1.5);
+  const hw = RATIO_HW[ratioFor(state.template, state.ratio)] || aspectHint || (lastRes ? lastRes.height / lastRes.width : 1.5);
   const fitByHeight = stageH / hw;
   const floorW = Math.min(stageW, 180);
   const w = Math.min(stageW, Math.max(floorW, fitByHeight));
@@ -766,6 +796,67 @@ function hitAt(ev) {
   return best;
 }
 
+/* ---------- 预览上的点按与拖动 ----------
+ * 点一下：切换重点句。景深模板里左右拖：移动取景，移动不到 DRAG_SLOP 像素仍算点按。 */
+
+const drag = { id: null, startX: 0, startCrop: 0, moved: false, suppressClick: false };
+
+function canDragCrop() {
+  return state.template === 'depth' && lastRes && lastRes.crop && lastRes.crop.range > 0;
+}
+
+function syncPreviewCursor() {
+  els.preview.classList.toggle('can-drag', state.template === 'depth');
+}
+
+function bindPreviewPointer() {
+  const cv = els.preview;
+  cv.addEventListener('pointerdown', (e) => {
+    if (!canDragCrop() || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    drag.id = e.pointerId;
+    drag.startX = e.clientX;
+    drag.startCrop = lastRes.crop.x0;
+    drag.moved = false;
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (drag.id === e.pointerId) {
+      const dx = e.clientX - drag.startX;
+      if (!drag.moved && Math.abs(dx) < DRAG_SLOP) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        cv.setPointerCapture(e.pointerId);
+        cv.classList.add('dragging');
+      }
+      const rect = cv.getBoundingClientRect();
+      const { S } = lastRes.crop;
+      const x0 = clamp(drag.startCrop + (dx * lastRes.width) / rect.width, lastRes.width - S, 0);
+      state.depthX = clamp((lastRes.width / 2 - x0) / S, 0, 1);
+      syncCrop();
+      requestRender();
+      return;
+    }
+    if (e.pointerType && e.pointerType !== 'mouse') return;
+    cv.classList.toggle('can-pick', !!hitAt(e));
+  });
+  const end = (e) => {
+    if (drag.id !== e.pointerId) return;
+    if (drag.moved) {
+      drag.suppressClick = true;
+      cv.classList.remove('dragging');
+      touch();
+    }
+    drag.id = null;
+  };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', end);
+  cv.addEventListener('pointerleave', () => cv.classList.remove('can-pick'));
+  cv.addEventListener('click', (e) => {
+    if (drag.suppressClick) { drag.suppressClick = false; return; }
+    const h = hitAt(e);
+    if (h) toggleFocus(h.index);
+  });
+}
+
 function toggleFocus(index) {
   const set = new Set(state.focus);
   if (set.has(index)) set.delete(index); else set.add(index);
@@ -851,16 +942,34 @@ function syncLyricsActions() {
 }
 
 function syncRatio() {
-  setPressed(els.ratioSeg, state.ratio);
+  const info = TEMPLATE_INFO[state.template];
+  for (const b of qsa('button[data-v]', els.ratioSeg)) b.disabled = !info.ratios.includes(b.dataset.v);
+  setPressed(els.ratioSeg, ratioFor(state.template, state.ratio));
+  els.ratioHelp.hidden = info.ratios.includes('auto');
 }
 
 function syncDark() {
+  const mode = modeOf(state.dark[state.template]);
+  setPressed(els.darkSeg, mode);
+  els.darkHelp.textContent = DARK_HELP[mode];
+}
+
+function syncStyle() {
   const sup = TEMPLATE_INFO[state.template].supports;
-  const buttons = qsa('button[data-v]', els.darkSeg);
-  for (const b of buttons) b.disabled = !sup.dark;
-  if (sup.dark) setPressed(els.darkSeg, state.dark[state.template] ? 'dark' : 'light');
+  const buttons = qsa('button[data-v]', els.variantSeg);
+  for (const b of buttons) b.disabled = !sup.style;
+  if (sup.style) setPressed(els.variantSeg, state.variant);
   else for (const b of buttons) b.setAttribute('aria-pressed', 'false');
-  els.darkHelp.hidden = !!sup.dark;
+  els.variantHelp.textContent = sup.style ? VARIANT_HELP[state.variant] : NO_STYLE_HELP;
+}
+
+/** 景深 crop slider: shows the chosen point, or the cover's own focus while on auto. */
+function syncCrop() {
+  const auto = state.depthX === null;
+  const x = auto ? (assets.analysis ? assets.analysis.focus.x : 0.5) : state.depthX;
+  setValue(els.fCrop, String(Math.round(x * 100)));
+  els.cropAuto.disabled = auto;
+  els.cropAuto.textContent = auto ? '自动中' : '恢复自动';
 }
 
 function syncTemplateUI() {
@@ -869,7 +978,11 @@ function syncTemplateUI() {
   for (const b of els.tileBtns) b.setAttribute('aria-pressed', String(b.dataset.t === t));
   syncRatio();
   syncDark();
-  els.scrimRow.hidden = !sup.scrim;
+  syncStyle();
+  els.blurRow.hidden = !sup.blur;
+  if (sup.blur) setPressed(els.blurSeg, state.blur[t]);
+  els.cropRow.hidden = !sup.crop;
+  if (sup.crop) syncCrop();
   for (const block of els.extraBlocks) {
     block.hidden = sup[block.dataset.x] === false;
   }
@@ -981,19 +1094,17 @@ function onTabKey(e) {
 }
 
 function syncAll() {
+  syncPreviewCursor();
   setValue(els.fTitle, state.title);
   setValue(els.fArtist, state.artist);
   setValue(els.fLyrics, state.lyrics);
   syncLyricsActions();
   setPressed(els.modeSeg, state.parseMode);
   syncModeHelp();
-  setPressed(els.variantSeg, state.variant);
   setPressed(els.alignSeg, state.align);
   setPressed(els.qualitySeg, meta.quality);
   setSwitch(els.swTrans, state.showTrans);
   syncScaleUI();
-  els.fScrim.value = String(Math.round(state.scrim * 100));
-  els.scrimOut.textContent = `${Math.round(state.scrim * 100)}%`;
   syncFontChips();
   syncExtras();
   syncTemplateUI();
@@ -1084,7 +1195,9 @@ function buildSwatches() {
     b.type = 'button';
     b.className = 'swatch';
     b.dataset.seed = hex;
-    b.setAttribute('aria-label', `封面里的第 ${i + 1} 个颜色 ${hex}`);
+    const role = { base: '主色', accent: '强调色', vivid: '封面里的颜色', neutral: '封面里的无彩色' }[assets.analysis?.swatches[i]?.role] || '封面里的颜色';
+    b.setAttribute('aria-label', `${role} ${hex}`);
+    b.title = `${role} ${hex}`;
     const face = document.createElement('span');
     let p80 = hex;
     let t80 = hex;
@@ -1132,6 +1245,7 @@ function selectTemplate(t) {
   state.template = t;
   state.ratio = TEMPLATE_INFO[t].defaultRatio;
   syncTemplateUI();
+  syncPreviewCursor();
   touch({ thumbs: false });
 }
 
@@ -1166,7 +1280,7 @@ function bindEditor() {
     if (b) selectTemplate(b.dataset.t);
   });
   onSeg(els.ratioSeg, (v) => {
-    if (!RATIOS.includes(v)) return;
+    if (!RATIOS.includes(v) || !TEMPLATE_INFO[state.template].ratios.includes(v)) return;
     state.ratio = v;
     syncRatio();
     touch({ thumbs: false });
@@ -1259,15 +1373,7 @@ function bindEditor() {
   els.pickClear.addEventListener('click', clearAllFocus);
   els.quickClearFocus.addEventListener('click', clearAllFocus);
 
-  els.preview.addEventListener('click', (e) => {
-    const h = hitAt(e);
-    if (h) toggleFocus(h.index);
-  });
-  els.preview.addEventListener('pointermove', (e) => {
-    if (e.pointerType && e.pointerType !== 'mouse') return;
-    els.preview.classList.toggle('can-pick', !!hitAt(e));
-  });
-  els.preview.addEventListener('pointerleave', () => els.preview.classList.remove('can-pick'));
+  bindPreviewPointer();
 
   // 配色
   els.swatches.addEventListener('click', (e) => {
@@ -1277,21 +1383,32 @@ function bindEditor() {
     onSeedChanged();
   });
   onSeg(els.variantSeg, (v) => {
-    if (!VARIANTS.includes(v)) return;
+    if (!VARIANTS.includes(v) || !TEMPLATE_INFO[state.template].supports.style) return;
     state.variant = v;
-    setPressed(els.variantSeg, v);
+    syncStyle();
     touch();
   });
   onSeg(els.darkSeg, (v) => {
-    if (!TEMPLATE_INFO[state.template].supports.dark) return;
-    state.dark[state.template] = v === 'dark';
+    if (!DARK_MODES.includes(v)) return;
+    state.dark[state.template] = v;
     syncDark();
     touch();
   });
-  els.fScrim.addEventListener('input', () => {
-    const v = Number(els.fScrim.value);
-    state.scrim = clamp(v / 100, 0.25, 0.85);
-    els.scrimOut.textContent = `${v}%`;
+  onSeg(els.blurSeg, (v) => {
+    const t = state.template;
+    if (!BLUR_LEVELS.includes(v) || !TEMPLATE_INFO[t].supports.blur) return;
+    state.blur[t] = v;
+    setPressed(els.blurSeg, v);
+    touch();
+  });
+  els.fCrop.addEventListener('input', () => {
+    state.depthX = clamp(Number(els.fCrop.value) / 100, 0, 1);
+    syncCrop();
+    touch({ thumbs: false });
+  });
+  els.cropAuto.addEventListener('click', () => {
+    state.depthX = null;
+    syncCrop();
     touch();
   });
 
@@ -1674,10 +1791,9 @@ async function resetAll() {
   mobileUI.contentExpanded = false;
   removeUserFont();
   assets.cover = defaults.cover;
-  assets.seeds = defaults.seeds.slice();
-  assets.light = defaults.light;
+  setAnalysis(defaults.analysis);
   coverSource = defaults.source;
-  state.seed = assets.seeds[0];
+  state.seed = assets.seeds[assets.analysis.defaultIndex] || assets.seeds[0];
   pickerKey = null;
   themeSeed = '';
 
@@ -1775,17 +1891,14 @@ async function boot() {
   if (state.extras.qr) loadQrAndRender();
 
   const source = makeDefaultCover();
-  const found = extractSeeds(source);
   defaults.source = source;
   defaults.cover = prepareCover(source);
-  defaults.seeds = found && found.seeds && found.seeds.length ? found.seeds : [FALLBACK_SEED];
-  defaults.light = (found && found.light) || null;
+  defaults.analysis = analyzeCover(source);
 
   assets.cover = defaults.cover;
-  assets.seeds = defaults.seeds.slice();
-  assets.light = defaults.light;
+  setAnalysis(defaults.analysis);
   coverSource = source;
-  if (!saved.seed) state.seed = assets.seeds[0];
+  if (!saved.seed) state.seed = assets.seeds[assets.analysis.defaultIndex] || assets.seeds[0];
 
   const restoring = restoreFiles(saved.seed).catch((err) => {
     console.warn('[歌词卡片] 恢复上次的封面或字体失败', err);
