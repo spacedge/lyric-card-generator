@@ -1,6 +1,6 @@
 // Drawing helpers shared by every template. All coordinates are design pixels on a
 // 540-wide card; the caller has already applied the device scale with setTransform.
-import { hasKana, hasHan, hasHangul, wrap } from '../text.js';
+import { hasKana, hasHan, hasHangul, wrap, wrapRuby } from '../text.js';
 
 export const W = 540;
 
@@ -42,6 +42,110 @@ export function setFont(ctx, weight, size, family) {
 
 export function wrapIn(ctx, text, maxW) {
   return wrap((s) => ctx.measureText(s).width, text, maxW);
+}
+
+// ---------- furigana (ruby) ----------
+
+const RUBY_SCALE = 0.5;   // ruby is half the size of the text it annotates
+
+/**
+ * Ruby metrics for one line style. Each line that may carry ruby gets `band` extra px above it,
+ * so the ruby clears the line before by about a quarter em. The whole card uses the same band
+ * for every line of that kind, which keeps the line pitch even.
+ */
+export function rubyMetrics(size, lh) {
+  const rSize = size * RUBY_SCALE;
+  const gap = size * 0.06;
+  const band = Math.max(0, Math.ceil(size * 0.25 + gap + rSize - (lh - size)));
+  return { size, rSize, gap, band };
+}
+
+// Ruby wider than its base may reach over a neighbouring kana, punctuation mark or space
+// (never over kanji, Latin, another ruby group or past the line edge), by up to one ruby character.
+const OVERHANG_ONTO = /^[\p{Script=Hiragana}\p{Script=Katakana}ー、。，．・：；！？「」『』（）〈〉【】…‥〜\s]$/u;
+const canOverhang = (ch) => !!ch && OVERHANG_ONTO.test(Array.from(ch).pop());
+
+/**
+ * How a ruby group sits in its line: w = width it takes in the line, oL = how far the ruby
+ * starts left of that box. before / after are the neighbouring characters ('' at a line edge,
+ * null next to another ruby group).
+ */
+export function rubyFit(s, before, after) {
+  const excess = s.rw - s.bw;
+  if (excess <= 0) return { w: s.bw, oL: 0 };
+  const half = Math.min(excess / 2, s.cap);
+  const oL = canOverhang(before) ? half : 0;
+  const oR = canOverhang(after) ? half : 0;
+  return { w: s.rw - oL - oR, oL };
+}
+
+/** Wrap parseRuby segments. r = rubyMetrics(...) plus baseFont and rubyFont. Ruby groups never break. */
+export function wrapRubyIn(ctx, segs, maxW, r) {
+  ctx.font = r.rubyFont;
+  const rw = segs.map((s) => (s.r === undefined ? 0 : ctx.measureText(s.r).width));
+  ctx.font = r.baseFont;
+  const sized = segs.map((s, i) => (s.r === undefined ? s : { ...s, bw: ctx.measureText(s.b).width, rw: rw[i], cap: r.rSize }));
+  return wrapRuby((x) => ctx.measureText(x).width, sized, maxW, (s, before, after) => rubyFit(s, before, after).w);
+}
+
+// Neighbouring character of segment j in a line, in the same form wrapRuby passes it.
+function edgeChar(segs, j, side) {
+  const s = segs[j];
+  if (!s) return '';
+  if (s.r !== undefined) return null;
+  const chars = Array.from(s.t);
+  return (side < 0 ? chars[chars.length - 1] : chars[0]) ?? '';
+}
+
+const SEGMENTER = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter('ja', { granularity: 'grapheme' }) : null;
+const graphemes = (s) => (SEGMENTER ? Array.from(SEGMENTER.segment(s), (g) => g.segment) : Array.from(s));
+
+/**
+ * Draw text in a box wider than itself. CJK text is spread evenly with half a gap at each end
+ * (the JIS 1:2:1 rule); Latin text and spaces stay together and are centred instead.
+ */
+function spread(ctx, text, x, box, y) {
+  const chars = graphemes(text);
+  const widths = chars.map((ch) => ctx.measureText(ch).width);
+  const slack = box - widths.reduce((a, b) => a + b, 0);
+  if (slack < 0.5 || chars.length < 2 || /[\sA-Za-z0-9]/.test(text)) {
+    ctx.fillText(text, x + Math.max(0, box - ctx.measureText(text).width) / 2, y);
+    return;
+  }
+  const d = slack / chars.length;
+  let cx = x + d / 2;
+  chars.forEach((ch, i) => { ctx.fillText(ch, cx, y); cx += widths[i] + d; });
+}
+
+/**
+ * Lines from wrapRubyIn, each with `r.band` px of ruby space above its line box.
+ * r = rubyMetrics(...) plus baseFont and rubyFont. Returns the block height.
+ */
+export function drawRubyLines(ctx, lines, x, y, lh, align, r) {
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  lines.forEach((segs, i) => {
+    const cy = y + i * (lh + r.band) + r.band + lh / 2;
+    ctx.font = r.baseFont;
+    const fits = segs.map((s, j) => (s.r === undefined
+      ? { w: ctx.measureText(s.t).width, oL: 0 }
+      : rubyFit(s, edgeChar(segs, j - 1, -1), edgeChar(segs, j + 1, 1))));
+    const total = fits.reduce((a, f) => a + f.w, 0);
+    let cx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+    segs.forEach((s, j) => {
+      const f = fits[j];
+      if (s.r === undefined) {
+        ctx.fillText(s.t, cx, cy);
+      } else {
+        spread(ctx, s.b, cx, f.w, cy);
+        ctx.font = r.rubyFont;
+        spread(ctx, s.r, cx - f.oL, Math.max(f.w, s.rw), cy - r.size / 2 - r.gap - r.rSize / 2);
+        ctx.font = r.baseFont;
+      }
+      cx += f.w;
+    });
+  });
+  return lines.length * (lh + r.band);
 }
 
 /** Lines are drawn centred in their line box; returns the block height. */

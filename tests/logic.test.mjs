@@ -1,4 +1,4 @@
-// 纯逻辑模块的单元测试：color.js / lyrics.js / text.js
+// 纯逻辑模块的单元测试：color.js / lyrics.js / text.js / ruby.js（以及 render/common.js 里的 rubyFit）
 // 运行：node tests/logic.test.mjs（在项目根目录）
 // 版权规则：测试里只用 CONTRACT.md 里的原创示例歌词或自编的中性文本。
 
@@ -11,7 +11,9 @@ import {
   toneOf, resolveDark, analyzePixels, analyzeCover, cardPalette,
 } from '../src/color.js';
 import { stripLrc, parseLyrics } from '../src/lyrics.js';
-import { hasKana, hasHan, hasHangul, NO_START, NO_END, wrap } from '../src/text.js';
+import { hasKana, hasHan, hasHangul, NO_START, NO_END, wrap, wrapRuby } from '../src/text.js';
+import { parseRuby, hasRuby, stripRuby, rubySegments } from '../src/ruby.js';
+import { rubyFit } from '../src/render/common.js';
 
 /* ================================================================== */
 /* color.js                                                            */
@@ -1466,5 +1468,130 @@ describe('text: wrap', () => {
   it('push-out falls back to a single character when the line is one long word', () => {
     // 整行只有一个词，没有整词可带：按契约把最后一个字符带下去，逗号不会出现在行首
     assert.deepEqual(wrap(measure, 'abcdefghi, jk', 5), ['abcdefgh', 'i, jk']);
+  });
+});
+
+/* ================================================================== */
+/* ruby.js + wrapRuby（振假名）                                         */
+/* ================================================================== */
+
+describe('ruby: parseRuby', () => {
+  it('text without markup is one plain segment; empty input gives none', () => {
+    assert.deepEqual(parseRuby('夏の光が落ちてた'), [{ t: '夏の光が落ちてた' }]);
+    assert.deepEqual(parseRuby(''), []);
+    assert.deepEqual(parseRuby(null), []);
+  });
+
+  it('explicit ｜ or | marks the base, and the ruby can be anything', () => {
+    assert.deepEqual(parseRuby('｜明日《あした》も'), [{ b: '明日', r: 'あした' }, { t: 'も' }]);
+    assert.deepEqual(parseRuby('君の|名前《なまえ》'), [{ t: '君の' }, { b: '名前', r: 'なまえ' }]);
+    assert.deepEqual(parseRuby('｜本気《マジ》で'), [{ b: '本気', r: 'マジ' }, { t: 'で' }]);
+    assert.deepEqual(parseRuby('｜ホーム《platform》'), [{ b: 'ホーム', r: 'platform' }]);
+  });
+
+  it('without ｜ the whole kanji run before 《かな》 is the base', () => {
+    assert.deepEqual(parseRuby('夏の東京《とうきょう》'), [{ t: '夏の' }, { b: '東京', r: 'とうきょう' }]);
+    assert.deepEqual(parseRuby('大東京《だいとうきょう》'), [{ b: '大東京', r: 'だいとうきょう' }]);
+    assert.deepEqual(parseRuby('時々《ときどき》'), [{ b: '時々', r: 'ときどき' }]);
+    assert.deepEqual(parseRuby('君《きみ》と僕《ぼく》'), [{ b: '君', r: 'きみ' }, { t: 'と' }, { b: '僕', r: 'ぼく' }]);
+  });
+
+  it('curly-brace form {base|ruby}', () => {
+    assert.deepEqual(parseRuby('{八月|はちがつ}の風'), [{ b: '八月', r: 'はちがつ' }, { t: 'の風' }]);
+  });
+
+  it('Chinese title marks are left alone', () => {
+    for (const s of ['喜欢《晴天》这首歌', '《晴天》', '我在《夜に駆ける》里', 'ひらがな《かな》']) {
+      assert.deepEqual(parseRuby(s), [{ t: s }], s);
+      assert.equal(hasRuby(s), false, s);
+    }
+  });
+
+  it('｜《 writes a literal 《', () => {
+    assert.deepEqual(parseRuby('｜《本》'), [{ t: '《本》' }]);
+    assert.equal(hasRuby('｜《本》'), false);
+  });
+
+  it('blank ruby or base is plain text; markup never crosses a line break', () => {
+    assert.deepEqual(parseRuby('｜今日《 》'), [{ t: '今日' }]);
+    assert.deepEqual(parseRuby('東京\n《とうきょう》'), [{ t: '東京\n《とうきょう》' }]);
+    assert.deepEqual(parseRuby('｜東京《 とうきょう 》'), [{ b: '東京', r: 'とうきょう' }]);
+  });
+
+  it('stripRuby keeps the base; rubySegments folds ruby away when hidden', () => {
+    const s = '誰《だれ》もいない｜明日《あした》';
+    assert.equal(stripRuby(s), '誰もいない明日');
+    assert.equal(hasRuby(s), true);
+    assert.deepEqual(rubySegments(s, false), [{ t: '誰もいない明日' }]);
+    assert.deepEqual(rubySegments(s, true), parseRuby(s));
+    assert.deepEqual(rubySegments('', false), []);
+  });
+});
+
+describe('text: wrapRuby', () => {
+  const groupW = g => Math.max(Array.from(g.b).length, Array.from(g.r).length * 0.5);
+  const plain = lines => lines.map(l => l.map(s => s.t ?? s.b).join(''));
+
+  it('without ruby it gives exactly what wrap() gives', () => {
+    for (const [text, w] of [['あいうえおかきくけこさしす', 5], ['the quick, brown fox', 5], ['誰もいないホームに 夏の光が落ちてた', 14], ['a\n\nb', 100], ['', 5]]) {
+      const lines = wrapRuby(measure, parseRuby(text), w, groupW);
+      assert.deepEqual(plain(lines), wrap(measure, text, w), text);
+      for (const l of lines) for (const s of l) assert.equal(s.r, undefined);
+    }
+  });
+
+  it('a ruby group is never split and moves to the next line whole', () => {
+    // あいう + 東京(2) = 5 fits; あいうえ + 東京 = 6 does not, so 東京 goes down whole
+    const segs = parseRuby('あいうえ東京《とうきょう》です');
+    const lines = wrapRuby(measure, segs, 5, groupW);
+    assert.deepEqual(plain(lines), ['あいうえ', '東京です']);
+    assert.deepEqual(lines[1][0], { b: '東京', r: 'とうきょう' });
+  });
+
+  it('the group takes the wider of base and ruby', () => {
+    // 光《ひかり》 is 1.5 wide: あいう + 1.5 = 4.5 fits in 4.5, not in 4
+    const segs = parseRuby('あいう光《ひかり》');
+    assert.equal(wrapRuby(measure, segs, 4.5, groupW).length, 1);
+    assert.deepEqual(plain(wrapRuby(measure, segs, 4, groupW)), ['あい', 'う光']);   // 防孤字 keeps two chars below
+  });
+
+  it('rubyWidth sees its neighbours: "" at a line edge, null beside another group', () => {
+    const seen = [];
+    const spy = (g, before, after) => { seen.push([g.b, before, after]); return groupW(g); };
+    wrapRuby(measure, parseRuby('光《ひかり》光《ひかり》が'), 100, spy);
+    const final = seen.slice(-2);
+    assert.deepEqual(final, [['光', '', null], ['光', null, 'が']]);
+  });
+
+  it('line-start rules still apply after a group', () => {
+    const lines = wrapRuby(measure, parseRuby('あいう東京《とうきょう》。かきく'), 5, groupW);
+    for (const l of plain(lines)) assert.ok(!startsBad(l), plain(lines).join('|'));
+  });
+
+  it('private-use characters already in the text cannot pose as groups', () => {
+    const segs = [{ t: 'あ\u{F0000}い' }, { b: '東京', r: 'とうきょう' }];
+    const lines = wrapRuby(measure, segs, 100, groupW);
+    assert.deepEqual(plain(lines), ['あい東京']);
+    assert.equal(lines[0].filter(s => s.r !== undefined).length, 1);
+  });
+});
+
+describe('render: rubyFit', () => {
+  const g = (bw, rw) => ({ b: 'x', r: 'y', bw, rw, cap: 10 });
+
+  it('ruby no wider than its base takes the base width', () => {
+    assert.deepEqual(rubyFit(g(40, 30), 'あ', 'い'), { w: 40, oL: 0 });
+  });
+
+  it('wider ruby reaches over kana and punctuation, up to one ruby character a side', () => {
+    assert.deepEqual(rubyFit(g(20, 30), 'の', 'が'), { w: 20, oL: 5 });
+    assert.deepEqual(rubyFit(g(20, 60), '、', 'を'), { w: 40, oL: 10 });     // capped at 10 a side
+    assert.deepEqual(rubyFit(g(20, 30), ' ', 'ー'), { w: 20, oL: 5 });
+  });
+
+  it('never over kanji, Latin, another group or past the line edge', () => {
+    assert.deepEqual(rubyFit(g(20, 30), '夏', 'a'), { w: 30, oL: 0 });
+    assert.deepEqual(rubyFit(g(20, 30), '', null), { w: 30, oL: 0 });
+    assert.deepEqual(rubyFit(g(20, 30), 'の', ''), { w: 25, oL: 5 });
   });
 });

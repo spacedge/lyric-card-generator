@@ -6,7 +6,7 @@ import { withAlpha, hexToOklch } from '../color.js';
 import { hasKana } from '../text.js';
 import {
   W, MONO, familyFor, setFont, wrapIn, drawLines, drawSpaced, rr, drawCoverFit, drawCoverCard,
-  progressFraction, drawWave, drawQR, verticalHeight, drawVertical,
+  progressFraction, drawWave, drawQR, verticalHeight, drawVertical, rubyMetrics, wrapRubyIn, drawRubyLines,
 } from './common.js';
 import { createBlurCache, blurImage } from './blur.js';
 
@@ -24,29 +24,50 @@ function blurred(env, src, w, h, sigma) {
 
 // ---------- shared pieces ----------
 
+const plainOf = (segs) => segs.map((s) => s.t ?? s.b).join('');
+
+/**
+ * Wrap one kind of text (original or translation). When the card has ruby for that kind
+ * (env.ruby.o / env.ruby.t), lines are segment arrays and every line gets the ruby band;
+ * otherwise they are plain strings, exactly as before furigana existed.
+ */
+function wrapKind(ctx, env, segs, withRuby, weight, size, lh, family, maxW) {
+  setFont(ctx, weight, size, family);
+  if (!withRuby) return { lines: wrapIn(ctx, plainOf(segs), maxW), ruby: null };
+  const r = rubyMetrics(size, lh);
+  const rubyWeight = weight >= 600 ? env.fp.w.medium : env.fp.w.regular;
+  r.baseFont = ctx.font;
+  r.rubyFont = `${rubyWeight} ${r.rSize}px ${env.fp.jp}`;
+  return { lines: wrapRubyIn(ctx, segs, maxW, r), ruby: r };
+}
+
 function measureGroup(ctx, env, g, maxW, spec) {
   const famO = familyFor(env.fp, g.o);
-  setFont(ctx, spec.oW, spec.oSize, famO);
-  const ol = wrapIn(ctx, g.o, maxW);
-  let tl = [], famT = '';
-  if (env.st.showTrans && g.t) {
+  const o = wrapKind(ctx, env, g.os, env.ruby.o, spec.oW, spec.oSize, spec.oLh, famO, maxW);
+  let t = { lines: [], ruby: null }, famT = '';
+  if (env.st.showTrans && g.ts.length) {
     famT = hasKana(g.t) ? env.fp.jp : env.fp.zh;
-    setFont(ctx, spec.tW, spec.tSize, famT);
-    tl = wrapIn(ctx, g.t, maxW);
+    t = wrapKind(ctx, env, g.ts, env.ruby.t, spec.tW, spec.tSize, spec.tLh, famT, maxW);
   }
-  const h = ol.length * spec.oLh + (tl.length ? spec.gap + tl.length * spec.tLh : 0);
-  return { idx: g.idx, ol, tl, famO, famT, h, spec };
+  const oPitch = spec.oLh + (o.ruby?.band || 0), tPitch = spec.tLh + (t.ruby?.band || 0);
+  const h = o.lines.length * oPitch + (t.lines.length ? spec.gap + t.lines.length * tPitch : 0);
+  return { idx: g.idx, ol: o.lines, tl: t.lines, oRuby: o.ruby, tRuby: t.ruby, famO, famT, h, spec };
+}
+
+function drawKind(ctx, lines, ruby, x, y, lh, align) {
+  if (ruby) return drawRubyLines(ctx, lines, x, y, lh, align, ruby);
+  return drawLines(ctx, lines, x, y, lh, align, true);
 }
 
 function drawGroup(ctx, m, x, y, col, align) {
   const s = m.spec;
   setFont(ctx, s.oW, s.oSize, m.famO);
   ctx.fillStyle = col.o;
-  drawLines(ctx, m.ol, x, y, s.oLh, align, true);
+  const oh = drawKind(ctx, m.ol, m.oRuby, x, y, s.oLh, align);
   if (m.tl.length) {
     setFont(ctx, s.tW, s.tSize, m.famT);
     ctx.fillStyle = col.t;
-    drawLines(ctx, m.tl, x, y + m.ol.length * s.oLh + s.gap, s.tLh, align, true);
+    drawKind(ctx, m.tl, m.tRuby, x, y + oh + s.gap, s.tLh, align);
   }
 }
 
