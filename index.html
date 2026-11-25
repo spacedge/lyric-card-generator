@@ -105,6 +105,21 @@
 
     <!-- 内容 -->
     <section class="card tabpanel" role="tabpanel" id="panel-content" aria-labelledby="tab-content">
+      <details class="guide-disclosure" id="guideDisclosure">
+        <summary class="guide-summary">
+          <span class="guide-summary-left">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 10.5v5.5M12 7.5h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span>怎么快速拿封面和歌词？</span>
+          </span>
+          <svg class="focus-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </summary>
+        <ul class="guide-list">
+          <li><strong>网易云音乐</strong>：播放页长按封面即可保存高清原图；点击进入歌词后再长按任意一句，可多选复制（勾选译文会一并复制，粘贴进来自动双语排版）。</li>
+          <li><strong>QQ 音乐</strong>：播放页右上角「…」可保存封面；进入歌词页长按即可多选复制。</li>
+          <li><strong>电脑端 / 通用</strong>：截好封面回到页面直接 <code>Ctrl+V</code> 粘贴替换；歌词栏点「粘贴替换」一键填入，带时间轴的 LRC 歌词会自动清洗。</li>
+        </ul>
+      </details>
+
       <button type="button" class="cover-card" id="coverBtn">
         <canvas id="coverThumb" width="144" height="144" aria-hidden="true"></canvas>
         <span class="cover-card-body">

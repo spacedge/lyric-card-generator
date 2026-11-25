@@ -63,24 +63,24 @@ button:disabled { cursor: default; }
 
 /* state layer: hover 8%, press 12% */
 .btn, .btn-tonal, .btn-text, .btn-outlined, .icon-btn, .seg button, .chip, .tile, .tabs button,
-.swatch, .pick, .cover-card, .mini-preview, .stage-zoom-btn, .focus-summary, .bottom-nav button, .output-reset {
+.swatch, .pick, .cover-card, .mini-preview, .stage-zoom-btn, .focus-summary, .guide-summary, .bottom-nav button, .output-reset {
   position: relative; isolation: isolate; transition: box-shadow .15s, background-color .2s, transform .15s;
 }
 .btn::after, .btn-tonal::after, .btn-text::after, .btn-outlined::after, .icon-btn::after, .seg button::after,
 .chip::after, .tile::after, .tabs button::after, .pick::after, .cover-card::after, .mini-preview::after,
-.stage-zoom-btn::after, .focus-summary::after, .output-reset::after {
+.stage-zoom-btn::after, .focus-summary::after, .guide-summary::after, .output-reset::after {
   content: ""; position: absolute; inset: 0; border-radius: inherit; background: currentColor; opacity: 0; transition: opacity .15s; pointer-events: none; z-index: -1;
 }
 @media (hover: hover) {
   .btn:hover::after, .btn-tonal:hover::after, .btn-text:hover::after, .btn-outlined:hover::after,
   .icon-btn:hover::after, .seg button:hover::after, .chip:hover::after, .tile:hover::after,
   .tabs button:hover::after, .pick:hover::after, .cover-card:hover::after, .mini-preview:hover::after,
-  .stage-zoom-btn:hover::after, .focus-summary:hover::after, .output-reset:hover::after { opacity: .08; }
+  .stage-zoom-btn:hover::after, .focus-summary:hover::after, .guide-summary:hover::after, .output-reset:hover::after { opacity: .08; }
 }
 .btn:active::after, .btn-tonal:active::after, .btn-text:active::after, .btn-outlined:active::after,
 .icon-btn:active::after, .seg button:active::after, .chip:active::after, .tile:active::after,
 .tabs button:active::after, .pick:active::after, .cover-card:active::after, .mini-preview:active::after,
-.stage-zoom-btn:active::after, .focus-summary:active::after, .output-reset:active::after { opacity: .12; }
+.stage-zoom-btn:active::after, .focus-summary:active::after, .guide-summary:active::after, .output-reset:active::after { opacity: .12; }
 button:disabled::after { display: none; }
 
 /* app bar */
@@ -215,6 +215,31 @@ button:disabled::after { display: none; }
 .field-sm { padding: 6px 12px; }
 .field-sm input { font-size: 16px; line-height: 22px; }
 .field:has(:focus-visible), .field :focus-visible { outline: none; }
+
+/* quick-start guide disclosure */
+.guide-disclosure {
+  border-radius: 14px; background: var(--surface-mid); overflow: hidden;
+}
+.guide-summary {
+  list-style: none; min-height: 40px; padding: 6px 12px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  cursor: pointer; user-select: none; color: var(--on-surface-variant); font-size: 13px; font-weight: 500;
+}
+.guide-summary::-webkit-details-marker { display: none; }
+.guide-summary-left { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.guide-summary-left svg { flex: none; color: var(--primary); }
+.guide-disclosure[open] .focus-chev { transform: rotate(180deg); }
+.guide-list {
+  margin: 0; padding: 0 14px 12px 14px; list-style: none;
+  display: flex; flex-direction: column; gap: 8px;
+  font-size: 12.5px; line-height: 1.65; color: var(--on-surface-variant);
+}
+.guide-list strong { color: var(--on-surface); font-weight: 500; }
+.guide-list code {
+  font-family: var(--font-mono); font-size: 11.5px;
+  padding: 1px 5px; border-radius: 5px;
+  background: var(--surface-highest); color: var(--on-surface);
+}
 
 /* full-row clickable cover picker */
 .cover-card {

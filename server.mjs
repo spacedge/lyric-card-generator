@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(process.env.SITE_ROOT || path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.PORT || 8080);
 
 const MIME = {
@@ -25,10 +25,13 @@ const BLOCKED_PREFIXES = ['.git', '.github', 'tests', 'tools', 'docs'];
 const BLOCKED_FILES = new Set(['server.mjs', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', '.gitignore']);
 
 function cacheControlFor(rel) {
+  if (rel === 'index.html' || rel === 'sw.js' || rel === 'manifest.webmanifest') {
+    return 'no-cache';
+  }
   if (rel.startsWith('icons/') || rel.startsWith('vendor/')) {
     return 'public, max-age=31536000, immutable';
   }
-  return 'no-cache';
+  return 'public, max-age=300, stale-while-revalidate=86400';
 }
 
 const server = http.createServer((req, res) => {
@@ -75,12 +78,22 @@ const server = http.createServer((req, res) => {
       return;
     }
     const ext = path.extname(full).toLowerCase();
-    res.writeHead(200, {
+    const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+    const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Content-Length': stat.size,
       'Cache-Control': cacheControlFor(rel),
+      'ETag': etag,
+      'Last-Modified': stat.mtime.toUTCString(),
       'X-Content-Type-Options': 'nosniff',
-    });
+    };
+    const inm = req.headers['if-none-match'];
+    if (inm && inm.split(',').some((tag) => tag.trim() === etag || tag.trim() === '*')) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    headers['Content-Length'] = stat.size;
+    res.writeHead(200, headers);
     if (req.method === 'HEAD') {
       res.end();
       return;
