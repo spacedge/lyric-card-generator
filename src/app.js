@@ -95,7 +95,7 @@ function safeFileName(title) {
     .replace(/[. ]+$/, '')
     .slice(0, 80)
     .trim();
-  return `${cleaned || '歌词卡片'}.png`;
+  return `${cleaned || 'Lyrics 4U'}.png`;
 }
 
 function fileLabel(name) {
@@ -1600,7 +1600,7 @@ function saveExport() {
 async function shareExport() {
   if (!exp.file) { toast('这台设备不能直接分享，请用“保存图片”。', true); return; }
   try {
-    await navigator.share({ files: [exp.file], title: state.title || '歌词卡片' });
+    await navigator.share({ files: [exp.file], title: state.title || 'Lyrics 4U' });
   } catch (err) {
     if (err && err.name === 'AbortError') return;
     console.warn('[歌词卡片] 分享失败', err);

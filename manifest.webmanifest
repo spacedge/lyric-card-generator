@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "歌词卡片",
-  "short_name": "歌词卡片",
+  "name": "Lyrics 4U",
+  "short_name": "Lyrics 4U",
   "description": "填入封面和歌词，生成一张分享用的歌词图片。所有处理都在本机完成。",
   "lang": "zh-CN",
   "start_url": "./",
