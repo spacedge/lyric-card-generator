@@ -11,8 +11,8 @@
  */
 'use strict';
 
-const CACHE = 'lyric-card-v8';
-const FONT_CACHE = 'lyric-card-fonts-v8';
+const CACHE = 'lyric-card-v9';
+const FONT_CACHE = 'lyric-card-fonts-v9';
 const KEEP = [CACHE, FONT_CACHE];
 
 // 相对 sw.js 所在目录，页面放在任何子路径都成立
@@ -26,6 +26,7 @@ const PRECACHE = [
   'src/color.js',
   'src/lyrics.js',
   'src/text.js',
+  'src/ruby.js',
   'src/render/common.js',
   'src/render/templates.js',
   'src/render/index.js',

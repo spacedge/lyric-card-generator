@@ -180,3 +180,58 @@ export function wrap(measure, text, maxWidth) {
     .split(/\r\n|\r|\n/)
     .flatMap(paragraph => wrapParagraph(measure, paragraph, maxWidth));
 }
+
+/* ------------------------------------------------------------------ */
+/* 带注音的折行                                                        */
+/* ------------------------------------------------------------------ */
+
+// 每个注音段落在折行时换成一个私用区字符：它是一个 token，不会被拆开，禁则和防孤字照常生效。
+const SLOT = 0xF0000;                       // 补充私用区 A
+const SLOT_RE = /[\u{F0000}-\u{FFFFD}]/gu;
+
+/**
+ * 折带注音的文本。segs 来自 parseRuby：[{ t }] 是普通文本，[{ b, r }] 是注音段落。
+ * measure(s) 量普通文本；rubyWidth(seg, before, after) 是一个注音段落在这一行里占的宽度，
+ * before / after 是它左右相邻的那个字符（在行首/行尾时是 ''，相邻的是另一个注音段落时是 null），
+ * 用来决定注音能不能探出到旁边的假名上方。
+ * 返回若干行，每行是一个段落数组；没有注音段落时结果和 wrap() 完全一样（每行是 [{ t }]）。
+ */
+export function wrapRuby(measure, segs, maxWidth, rubyWidth) {
+  const groups = [];
+  let text = '';
+  for (const s of segs) {
+    if (s.r === undefined) { text += String(s.t ?? '').replace(SLOT_RE, ''); continue; }
+    text += String.fromCodePoint(SLOT + groups.length);
+    groups.push(s);
+  }
+  const groupAt = cp => (cp >= SLOT && cp < SLOT + groups.length ? groups[cp - SLOT] : null);
+
+  // 相邻字符：行首行尾是 ''，相邻的是另一个注音段落时是 null
+  const neighbor = ch => (ch === undefined ? '' : groupAt(ch.codePointAt(0)) ? null : ch);
+  const measureMixed = s => {
+    const chars = Array.from(s);
+    let w = 0, run = '';
+    chars.forEach((ch, i) => {
+      const g = groupAt(ch.codePointAt(0));
+      if (!g) { run += ch; return; }
+      if (run) { w += measure(run); run = ''; }
+      w += rubyWidth(g, neighbor(chars[i - 1]), neighbor(chars[i + 1]));
+    });
+    return run ? w + measure(run) : w;
+  };
+
+  const toSegs = line => {
+    const out = [];
+    let run = '';
+    for (const ch of line) {
+      const g = groupAt(ch.codePointAt(0));
+      if (!g) { run += ch; continue; }
+      if (run) { out.push({ t: run }); run = ''; }
+      out.push(g);
+    }
+    if (run) out.push({ t: run });
+    return out;
+  };
+
+  return wrap(groups.length ? measureMixed : measure, text, maxWidth).map(toSegs);
+}

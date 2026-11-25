@@ -5,6 +5,7 @@
 import { FONT_CSS_URL, APP_VERSION } from './config.js';
 import * as store from './storage.js';
 import { FALLBACK_SEED, makeScheme, analyzeCover } from './color.js';
+import { hasRuby, stripRuby } from './ruby.js';
 import {
   TEMPLATE_INFO, TEMPLATE_ORDER, FONT_PRESETS, DESIGN_WIDTH, BLUR_LEVELS,
   makeDefaultCover, prepareCover, renderCard, fontsToLoad, groupsOf, ratioFor, modeOf, fallbackAnalysis,
@@ -145,6 +146,7 @@ function defaultState() {
     scale: 1,
     align: 'left',
     showTrans: true,
+    showRuby: true,
     ratio: TEMPLATE_INFO.compact.defaultRatio,
     extras: {
       date: false, dateText: todayText(),
@@ -197,7 +199,7 @@ function cacheEls() {
     'swatches', 'variantRow', 'variantSeg', 'variantHelp', 'darkSeg', 'darkHelp',
     'ratioHelp', 'blurRow', 'blurSeg', 'cropRow', 'fCrop', 'cropAuto',
     'fontChips', 'customChip', 'fontBtn', 'fontInput', 'fontHelp',
-    'fScale', 'scaleOut', 'scaleReset', 'alignSeg', 'swTrans',
+    'fScale', 'scaleOut', 'scaleReset', 'alignSeg', 'swTrans', 'rubyRow', 'swRuby',
     'resetBtn', 'exportBtn',
     'exportDlg', 'exportClose', 'exportImg', 'exportInfo', 'qualitySeg', 'saveBtn', 'shareBtn', 'copyBtn',
     'snack', 'dynTheme',
@@ -296,6 +298,7 @@ function applySaved(saved) {
     if (typeof s.scale === 'number' && Number.isFinite(s.scale)) state.scale = clamp(s.scale, 0.8, 1.3);
     if (ALIGNS.includes(s.align)) state.align = s.align;
     if (typeof s.showTrans === 'boolean') state.showTrans = s.showTrans;
+    if (typeof s.showRuby === 'boolean') state.showRuby = s.showRuby;
     if (RATIOS.includes(s.ratio)) state.ratio = s.ratio;
     if (isPlain(s.extras)) {
       for (const k of EXTRA_KEYS) if (typeof s.extras[k] === 'boolean') state.extras[k] = s.extras[k];
@@ -939,6 +942,8 @@ function setValue(input, value) {
 
 function syncLyricsActions() {
   els.clearLyricsBtn.disabled = !state.lyrics.trim();
+  // 显示注音 only matters once the lyrics have furigana markup.
+  els.rubyRow.hidden = !hasRuby(state.lyrics);
 }
 
 function syncRatio() {
@@ -1104,6 +1109,7 @@ function syncAll() {
   setPressed(els.alignSeg, state.align);
   setPressed(els.qualitySeg, meta.quality);
   setSwitch(els.swTrans, state.showTrans);
+  setSwitch(els.swRuby, state.showRuby);
   syncScaleUI();
   syncFontChips();
   syncExtras();
@@ -1134,10 +1140,11 @@ function refreshPicker(groups) {
         b.type = 'button';
         b.className = 'pick';
         b.dataset.i = String(i);
-        b.title = g.t ? `${g.o}\n${g.t}` : g.o;
+        const o = stripRuby(g.o), t = stripRuby(g.t);
+        b.title = t ? `${o}\n${t}` : o;
         const text = document.createElement('span');
         text.className = 'pick-text';
-        text.textContent = String(g.o).replace(/\s*\n\s*/g, ' ');
+        text.textContent = o.replace(/\s*\n\s*/g, ' ');
         const tag = document.createElement('span');
         tag.className = 'pick-tag';
         tag.setAttribute('aria-hidden', 'true');
@@ -1448,6 +1455,11 @@ function bindEditor() {
   els.swTrans.addEventListener('click', () => {
     state.showTrans = !state.showTrans;
     setSwitch(els.swTrans, state.showTrans);
+    touch();
+  });
+  els.swRuby.addEventListener('click', () => {
+    state.showRuby = !state.showRuby;
+    setSwitch(els.swRuby, state.showRuby);
     touch();
   });
 

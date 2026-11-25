@@ -1,5 +1,6 @@
 // Public render API. Renders a card onto a canvas at any scale.
 import { parseLyrics } from '../lyrics.js';
+import { rubySegments } from '../ruby.js';
 import { cardPalette, resolveDark, hexToOklch, FALLBACK_SEED } from '../color.js';
 import { W, preset, makeDefaultCover as defaultCoverCanvas } from './common.js';
 import { TEMPLATES, BLUR_SIGMA, depthCrop } from './templates.js';
@@ -77,7 +78,7 @@ function normalize(state) {
   const depthX = typeof state.depthX === 'number' && Number.isFinite(state.depthX) ? Math.min(1, Math.max(0, state.depthX)) : null;
   return {
     template: 'compact', title: '', artist: '', lyrics: '', parseMode: 'bilingual', focus: [], seed: FALLBACK_SEED,
-    variant: 'content', font: 'sans', scale: 1, align: 'left', showTrans: true, ratio: 'auto',
+    variant: 'content', font: 'sans', scale: 1, align: 'left', showTrans: true, showRuby: true, ratio: 'auto',
     ...state,
     dark, blur, depthX,
     extras: { ...EXTRA_DEFAULTS, ...(state.extras || {}) },
@@ -126,7 +127,10 @@ export function renderCard(canvas, state, assets, opts = {}) {
   const name = TEMPLATES[st.template] ? st.template : 'compact';
   const T = TEMPLATES[name];
   const info = TEMPLATE_INFO[name];
-  const groups = groupsOf(st).map((g, idx) => ({ ...g, idx }));
+  // os / ts: the original and translation as furigana segments (ruby folded into plain text when hidden).
+  const showRuby = st.showRuby !== false;
+  const groups = groupsOf(st).map((g, idx) => ({ ...g, idx, os: rubySegments(g.o, showRuby), ts: rubySegments(g.t, showRuby) }));
+  const hasRubySeg = (segs) => segs.some((s) => s.r !== undefined);
   const focus = new Set((st.focus || []).filter((i) => Number.isInteger(i) && i >= 0 && i < groups.length));
   const ratio = ratioFor(name, st.ratio);
   const H = RATIO_HEIGHT[ratio] || null;
@@ -138,6 +142,7 @@ export function renderCard(canvas, state, assets, opts = {}) {
     pal: cardPalette({ seed: st.seed || FALLBACK_SEED, accent: analysis.accent, style: st.variant || 'content', mode, meanL: analysis.meanL }),
     darkMode: resolveDark(mode, analysis.meanL),
     sup: info.supports, groups, focus, hasFocus: focus.size > 0, H, k: 1, hits: [], canvasH: 0,
+    ruby: { o: groups.some((g) => hasRubySeg(g.os)), t: !!st.showTrans && groups.some((g) => hasRubySeg(g.ts)) },
     purpose: opts.purpose || 'preview',
   };
 

@@ -165,7 +165,7 @@
         <div class="field field-bare">
           <textarea id="fLyrics" rows="7" spellcheck="false" placeholder="粘贴或输入歌词，LRC 时间轴会自动去掉"></textarea>
         </div>
-        <span class="helper">从音乐软件复制的 LRC 歌词会自动去掉时间轴。</span>
+        <span class="helper">从音乐软件复制的 LRC 歌词会自动去掉时间轴。日文注音写成 漢字《かんじ》，要给假名或一部分汉字注音时在前面加 ｜，如 ｜明日《あした》。</span>
       </div>
 
       <div class="row-block">
@@ -258,6 +258,10 @@
       <div class="switch-row">
         <span>显示译文</span>
         <button type="button" class="switch" role="switch" id="swTrans" aria-label="显示译文"><i></i></button>
+      </div>
+      <div class="switch-row" id="rubyRow" hidden>
+        <span>显示注音</span>
+        <button type="button" class="switch" role="switch" id="swRuby" aria-label="显示注音"><i></i></button>
       </div>
     </section>
 
