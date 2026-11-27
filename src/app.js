@@ -205,7 +205,7 @@ function cacheEls() {
     'fontChips', 'customChip', 'fontBtn', 'fontInput', 'fontHelp',
     'fScale', 'scaleOut', 'scaleReset', 'alignSeg', 'swTrans', 'rubyRow', 'swRuby',
     'resetBtn', 'exportBtn',
-    'exportDlg', 'exportClose', 'exportImg', 'exportInfo', 'qualitySeg', 'saveBtn', 'shareBtn', 'copyBtn',
+    'exportDlg', 'exportClose', 'exportImg', 'exportHint', 'exportInfo', 'qualitySeg', 'saveBtn', 'shareBtn', 'copyBtn',
     'snack', 'dynTheme',
   ];
   for (const id of ids) els[id] = $(id);
@@ -1712,6 +1712,22 @@ function setInert(on) {
   }
 }
 
+function inAppBrowserName(ua = navigator.userAgent || '') {
+  if (/\bMicroMessenger\b/i.test(ua)) return '微信';
+  if (/\bQQ\/\d|\bQzone\b/i.test(ua)) return 'QQ';
+  if (/\bBiliApp\b|\bBilibili\b/i.test(ua)) return 'B站';
+  if (/\bWeibo\b/i.test(ua)) return '微博';
+  if (/\b(aweme|BytedanceWebview|baiduboxapp|DingTalk|Lark)\b/i.test(ua)) return '当前应用';
+  return '';
+}
+
+function nudgeExportImg() {
+  els.exportImg.classList.remove('img-nudge');
+  void els.exportImg.offsetWidth;
+  els.exportImg.classList.add('img-nudge');
+  setTimeout(() => els.exportImg.classList.remove('img-nudge'), 900);
+}
+
 function safeCanShare(file) {
   try {
     return typeof navigator.canShare === 'function' && typeof navigator.share === 'function' && navigator.canShare({ files: [file] });
@@ -1838,6 +1854,10 @@ function openExport(opener) {
   try { probe = new File([''], 'a.png', { type: 'image/png' }); } catch { /* ignore */ }
   layoutActions(probe);
   els.exportImg.removeAttribute('src');
+  const inApp = inAppBrowserName();
+  if (els.exportHint) {
+    els.exportHint.textContent = inApp ? `${inApp}内可长按上方图片保存` : '长按图片也能直接保存';
+  }
   els.exportInfo.textContent = '';
   els.exportClose.focus();
   generateExport();
@@ -1858,8 +1878,24 @@ function closeExport() {
   if (opener && opener.isConnected && opener.getClientRects().length > 0) opener.focus();
 }
 
-function saveExport() {
+async function saveExport() {
   if (!exp.blob || !exp.url) return;
+  const inApp = inAppBrowserName();
+  if (inApp) {
+    // QQ/WeChat/Bilibili in-app WebViews intercept <a href="blob:..." download> and either
+    // silently drop it or hand the unreachable blob: URL to an external viewer (black screen).
+    if (exp.file && safeCanShare(exp.file)) {
+      try {
+        await navigator.share({ files: [exp.file], title: state.title || 'Lyrics 4U' });
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+      }
+    }
+    nudgeExportImg();
+    toast(`${inApp}内置浏览器不支持直接下载，请长按上方图片保存，或点右上角用系统浏览器打开。`, true);
+    return;
+  }
   const a = document.createElement('a');
   a.href = exp.url;
   a.download = exp.name;
