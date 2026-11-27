@@ -386,6 +386,7 @@ body.dragging .preview-pane { box-shadow: inset 0 0 0 3px var(--primary); }
   .appbar .btn svg { width: 16px; height: 16px; }
 
   .layout {
+    position: relative;
     flex: 1 1 0; min-height: 0; width: 100%; max-width: none;
     padding: 0; margin: 0;
     display: flex; flex-direction: column; flex-wrap: nowrap; gap: 0;
@@ -409,6 +410,7 @@ body.dragging .preview-pane { box-shadow: inset 0 0 0 3px var(--primary); }
   }
   .preview-footer {
     max-width: none; gap: 4px 8px;
+    transition: opacity .12s;
   }
   .statusline { font-size: 11px; line-height: 16px; min-height: 16px; }
   .focus-hint { font-size: 11px; }
@@ -440,20 +442,25 @@ body.dragging .preview-pane { box-shadow: inset 0 0 0 3px var(--primary); }
     font-size: 12px; font-weight: 500;
   }
 
-  /* Drawer collapsed: keep a persistent 28px pull-up handle docked above bottom nav */
-  body.mobile-drawer-closed .preview-pane {
+  /* Drawer collapsed: keep a persistent 32px pull-up handle docked above bottom nav */
+  body.mobile-drawer-closed .preview-pane,
+  body.is-dragging-drawer .preview-pane {
     flex: 1 1 0; padding: 12px 16px 8px;
   }
+  body.is-dragging-drawer .preview-footer { opacity: 0; pointer-events: none; }
+  body.is-dragging-drawer .preview-stage { overflow: hidden; }
+  body.is-dragging-drawer #preview { will-change: transform; transform-origin: center center; }
+
   body.mobile-drawer-closed .panel {
-    flex: 0 0 auto; height: 28px; max-height: 28px;
+    flex: 0 0 auto; height: 32px; max-height: 32px;
     overflow: hidden;
-    border-radius: 16px 16px 0 0;
+    border-radius: 18px 18px 0 0;
   }
   body.mobile-drawer-closed .panel > .card { display: none; }
 
   /* Adaptive-height interactive bottom drawer (pause at any dragged height) */
   .panel {
-    flex: 0 1 auto; min-height: 28px; max-height: 46vh; max-height: 46dvh;
+    flex: 0 1 auto; min-height: 32px; max-height: 46vh; max-height: 46dvh;
     max-width: none; width: 100%;
     overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
     background: var(--surface-low);
@@ -462,7 +469,9 @@ body.dragging .preview-pane { box-shadow: inset 0 0 0 3px var(--primary); }
     padding: 0; gap: 0;
   }
   .panel.dragging-drawer {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 12;
     overflow: hidden;
+    will-change: transform; contain: layout style;
     user-select: none; -webkit-user-select: none;
   }
   .drawer-bar {
@@ -473,18 +482,18 @@ body.dragging .preview-pane { box-shadow: inset 0 0 0 3px var(--primary); }
     touch-action: none; cursor: ns-resize;
   }
   .drawer-handle-btn {
-    width: 100%; height: 28px; border: 0; background: transparent; padding: 0;
+    width: 100%; height: 32px; border: 0; background: transparent; padding: 0;
     display: flex; align-items: center; justify-content: center;
     cursor: inherit;
   }
   .drawer-handle {
-    width: 38px; height: 4px; border-radius: 999px;
+    width: 40px; height: 4px; border-radius: 999px;
     background: color-mix(in srgb, var(--on-surface-variant) 46%, transparent);
     transition: width .15s, background-color .15s;
   }
   .panel.dragging-drawer .drawer-handle,
   body.mobile-drawer-closed .drawer-handle {
-    width: 44px;
+    width: 46px;
     background: color-mix(in srgb, var(--primary) 65%, var(--on-surface-variant));
   }
   body.mobile-compact-preview .panel {
@@ -496,6 +505,7 @@ body.dragging .preview-pane { box-shadow: inset 0 0 0 3px var(--primary); }
   .card {
     background: transparent; border-radius: 0;
     padding: 6px 14px 16px; gap: 12px;
+    contain: layout style;
   }
   body.mobile-compact-preview .card { padding: 14px 14px 24px; gap: 16px; }
   .card .row-block { gap: 8px; }

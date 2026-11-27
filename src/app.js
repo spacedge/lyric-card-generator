@@ -45,7 +45,7 @@ const MAX_FONT_BYTES = 80 * 1024 * 1024;
 const MAX_COVER_EDGE = 3000;
 const MAX_EXPORT_AREA = 16e6;
 const MAX_DATA_URL_BYTES = 10 * 1024 * 1024;
-const DRAWER_PEEK = 28;
+const DRAWER_PEEK = 32;
 const DRAWER_MIN_OPEN = 84;
 const DRAWER_MAX_FRAC = 0.72;
 
@@ -783,9 +783,8 @@ function renderPreview() {
 }
 
 function onResize() {
-  if (!els.editorPanel.classList.contains('dragging-drawer')) {
-    syncNavigation({ scrollPanel: false });
-  }
+  if (document.body.classList.contains('is-dragging-drawer')) return;
+  syncNavigation({ scrollPanel: false });
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   if (previewWidth() !== lastCssW || dpr !== lastDpr) requestRender();
 }
@@ -1043,6 +1042,7 @@ function clearDrawerInlineSize() {
   els.editorPanel.style.height = '';
   els.editorPanel.style.maxHeight = '';
   els.editorPanel.style.transform = '';
+  els.preview.style.transform = '';
 }
 
 function drawerHeightLimits(tabName) {
@@ -1059,7 +1059,7 @@ function syncNavigation({ scrollPanel = false } = {}) {
   const desktop = desktopMQ.matches;
 
   if (desktop) {
-    document.body.classList.remove('mobile-compact-preview', 'mobile-drawer-closed');
+    document.body.classList.remove('mobile-compact-preview', 'mobile-drawer-closed', 'is-dragging-drawer');
     els.editorPanel.classList.remove('dragging-drawer');
     clearDrawerInlineSize();
     els.panelTemplate.hidden = false;
@@ -1373,8 +1373,30 @@ function bindEditor() {
     }
   });
 
-  // 手机端抽屉顶栏把手：支持上下跟手拖动并在任意高度暂停，划到底保留可随时上拉的把手条
+  // 手机端抽屉顶栏把手：纯 GPU transform 跟手拖动（拖动期零重排、零 Canvas 重绘），松手停在当前高度并定格高清重绘
   let drawerDrag = null;
+  const applyDragFrame = () => {
+    if (!drawerDrag) return;
+    drawerDrag.raf = 0;
+    const d = drawerDrag;
+    const shiftY = Math.max(0, d.maxH - d.curH);
+    els.editorPanel.style.transform = `translate3d(0, ${shiftY.toFixed(1)}px, 0)`;
+
+    if (d.baseW > 0 && d.aspect > 0) {
+      const availH = Math.max(88, d.layoutH - d.curH - d.footerH - 22);
+      const fitW = availH / d.aspect;
+      const minW = Math.min(d.stageW, 108);
+      const targetW = clamp(fitW, minW, d.stageW);
+      const targetH = targetW * d.aspect;
+      const targetCenterY = targetH <= availH
+        ? (d.layoutTop + 8 + availH / 2)
+        : (d.layoutTop + 10 + targetH / 2);
+      const scale = targetW / d.baseW;
+      const ty = targetCenterY - d.baseCenterY;
+      els.preview.style.transform = `translate3d(0, ${ty.toFixed(1)}px, 0) scale(${scale.toFixed(4)})`;
+    }
+  };
+
   els.drawerBar.addEventListener('pointerdown', (e) => {
     if (desktopMQ.matches || (e.pointerType === 'mouse' && e.button !== 0)) return;
     const startH = Math.round(els.editorPanel.getBoundingClientRect().height);
@@ -1389,7 +1411,15 @@ function bindEditor() {
       wasOpen: mobileUI.drawerOpen,
       wasCompact: document.body.classList.contains('mobile-compact-preview'),
       moved: false,
+      raf: 0,
       maxH: 0,
+      layoutTop: 0,
+      layoutH: 0,
+      footerH: 36,
+      stageW: 0,
+      baseW: 0,
+      baseCenterY: 0,
+      aspect: 1.5,
     };
     try { els.drawerBar.setPointerCapture(e.pointerId); } catch { /* ignore */ }
   });
@@ -1399,15 +1429,36 @@ function bindEditor() {
     if (!drawerDrag.moved && Math.abs(rawDy) < 5) return;
     if (!drawerDrag.moved) {
       drawerDrag.moved = true;
-      els.editorPanel.classList.add('dragging-drawer');
-      // Reveal active panel immediately when pulling up from collapsed handle or pulling down from compact Content
+      // Activate compositor-only overlay mode once; zero DOM layout reflows after this frame
+      document.body.classList.add('is-dragging-drawer');
       if (!drawerDrag.wasOpen) document.body.classList.remove('mobile-drawer-closed');
       if (drawerDrag.wasCompact) document.body.classList.remove('mobile-compact-preview');
       const limits = drawerHeightLimits(meta.mobileTab);
-      drawerDrag.maxH = limits.maxH;
+      drawerDrag.maxH = drawerDrag.wasCompact ? limits.maxH : Math.max(limits.maxH, drawerDrag.startH);
       if (drawerDrag.wasCompact) {
-        drawerDrag.startH = Math.min(drawerDrag.startH, limits.maxH);
+        drawerDrag.startH = Math.min(drawerDrag.startH, drawerDrag.maxH);
       }
+      els.editorPanel.classList.add('dragging-drawer');
+      els.editorPanel.style.flex = 'none';
+      els.editorPanel.style.height = `${drawerDrag.maxH}px`;
+      els.editorPanel.style.maxHeight = 'none';
+      // If coming from compact Content mode, preview was hidden — render it once before measuring
+      if (drawerDrag.wasCompact) renderPreview();
+      const lr = els.layout.getBoundingClientRect();
+      const pr = els.preview.getBoundingClientRect();
+      const fr = els.pane.querySelector('.preview-footer')?.getBoundingClientRect();
+      drawerDrag.layoutTop = lr.top;
+      drawerDrag.layoutH = lr.height;
+      drawerDrag.footerH = fr ? Math.max(24, fr.height) : 36;
+      drawerDrag.stageW = Math.max(180, els.stage.clientWidth || (lr.width - 28));
+      drawerDrag.baseW = pr.width;
+      drawerDrag.baseCenterY = pr.top + pr.height / 2;
+      drawerDrag.aspect = (pr.width > 0 && pr.height > 0)
+        ? (pr.height / pr.width)
+        : (lastRes ? lastRes.height / lastRes.width : 1.5);
+      drawerDrag.curH = clamp(drawerDrag.startH - rawDy, DRAWER_PEEK, drawerDrag.maxH);
+      applyDragFrame();
+      return;
     }
     const now = performance.now();
     const dt = Math.max(1, now - drawerDrag.lastT);
@@ -1415,18 +1466,18 @@ function bindEditor() {
     drawerDrag.lastY = e.clientY;
     drawerDrag.lastT = now;
 
-    const nextH = clamp(drawerDrag.startH - rawDy, DRAWER_PEEK, drawerDrag.maxH);
-    drawerDrag.curH = nextH;
-    els.editorPanel.style.flex = '0 0 auto';
-    els.editorPanel.style.height = `${Math.round(nextH)}px`;
-    els.editorPanel.style.maxHeight = 'none';
-    requestRender();
+    drawerDrag.curH = clamp(drawerDrag.startH - rawDy, DRAWER_PEEK, drawerDrag.maxH);
+    if (!drawerDrag.raf) drawerDrag.raf = requestAnimationFrame(applyDragFrame);
   });
   const endDrawerDrag = (e) => {
     if (!drawerDrag || e.pointerId !== drawerDrag.id) return;
     const d = drawerDrag;
     drawerDrag = null;
+    if (d.raf) cancelAnimationFrame(d.raf);
+    document.body.classList.remove('is-dragging-drawer');
     els.editorPanel.classList.remove('dragging-drawer');
+    els.editorPanel.style.transform = '';
+    els.preview.style.transform = '';
 
     if (e.type === 'pointercancel') {
       syncNavigation();
