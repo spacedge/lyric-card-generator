@@ -200,18 +200,26 @@
     <!-- 配色 -->
     <section class="card tabpanel" role="tabpanel" id="panel-color" aria-labelledby="tab-color" hidden>
       <div class="row-block">
-        <h3 class="label">从封面取的颜色</h3>
-        <div class="swatches" id="swatches"></div>
-      </div>
-      <div class="row-block" id="variantRow">
-        <h3 class="label">风格</h3>
-        <div class="seg" role="group" aria-label="风格" id="variantSeg">
-          <button type="button" data-v="content">忠实</button>
-          <button type="button" data-v="tonal">柔和</button>
-          <button type="button" data-v="vibrant">鲜明</button>
-          <button type="button" data-v="mono">单色</button>
+        <div class="section-head">
+          <h3 class="label">从封面取的颜色</h3>
+          <button type="button" class="btn-tonal btn-compact" id="eyedropBtn" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M19.5 4.5a2.12 2.12 0 0 0-3 0L14 7l-1.3-1.3a1 1 0 1 0-1.4 1.4l.8.8-6.6 6.6a2 2 0 0 0-.5.9l-.9 3.6 3.6-.9a2 2 0 0 0 .9-.5l6.6-6.6.8.8a1 1 0 1 0 1.4-1.4L16 9l2.5-2.5a2.12 2.12 0 0 0 1-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>从封面吸色</span>
+          </button>
         </div>
-        <span class="helper" id="variantHelp"></span>
+        <div class="swatches" id="swatches"></div>
+        <div class="eyedrop-box" id="eyedropBox" hidden>
+          <div class="eyedrop-stage" id="eyedropStage">
+            <canvas id="eyedropCanvas" width="240" height="240" aria-label="点击或拖动封面取色"></canvas>
+            <div class="eyedrop-loupe" id="eyedropLoupe" hidden></div>
+          </div>
+          <div class="eyedrop-bar">
+            <span class="eyedrop-dot" id="eyedropDot"></span>
+            <span class="mono" id="eyedropHex">#5DAEE6</span>
+            <span class="helper">点按或拖动封面取色</span>
+            <button type="button" class="btn-text btn-compact" id="eyedropDone">完成</button>
+          </div>
+        </div>
       </div>
       <div class="row-block">
         <h3 class="label">明暗</h3>
@@ -248,6 +256,14 @@
           <button type="button" class="output-reset mono" id="scaleReset" title="点击恢复 100%"><output id="scaleOut">100%</output></button>
         </div>
         <input type="range" id="fScale" min="80" max="130" step="5">
+      </div>
+      <div class="row-block">
+        <h3 class="label">行距</h3>
+        <div class="seg" role="group" aria-label="行距" id="lineGapSeg">
+          <button type="button" data-v="tight">紧凑</button>
+          <button type="button" data-v="normal">标准</button>
+          <button type="button" data-v="loose">宽松</button>
+        </div>
       </div>
       <div class="row-block">
         <h3 class="label">对齐</h3>
@@ -349,9 +365,12 @@
     </header>
     <div class="export-stage"><img id="exportImg" alt="生成的歌词图片"></div>
     <div class="export-meta"><span id="exportHint">长按图片也能直接保存</span><span id="exportInfo" class="mono"></span></div>
-    <div class="seg" role="group" aria-label="清晰度" id="qualitySeg">
-      <button type="button" data-v="2">标准 1080 宽</button>
-      <button type="button" data-v="4">高清 2160 宽</button>
+    <div class="switch-row export-wm-row">
+      <div class="switch-text">
+        <span>角落署名</span>
+        <small class="mono">by sw0721.me</small>
+      </div>
+      <button type="button" class="switch" role="switch" id="swWatermark" aria-label="角落署名 by sw0721.me"><i></i></button>
     </div>
     <div class="export-actions">
       <button type="button" class="btn btn-lg" id="saveBtn">保存图片</button>

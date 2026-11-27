@@ -12,6 +12,19 @@ import { createBlurCache, blurImage } from './blur.js';
 
 const PLACEHOLDER = '歌词会出现在这里';
 const QR_LABEL = '长按识别二维码收听';
+const SIGNATURE_TEXT = 'by sw0721.me';
+const SIG_FONT = 'italic 500 11.5px Georgia, "Noto Serif JP", "Noto Serif SC", "Times New Roman", serif';
+
+function drawSignature(ctx, env, color, rightX, y) {
+  if (!env.st.watermark) return;
+  ctx.save();
+  ctx.font = SIG_FONT;
+  ctx.fillStyle = color;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(SIGNATURE_TEXT, rightX, y);
+  ctx.restore();
+}
 
 // Gaussian sigma in design px for the photo templates' blur levels.
 export const BLUR_SIGMA = { light: 6, mid: 14, heavy: 24 };
@@ -167,59 +180,79 @@ function okDistance(a, b) {
   return Math.hypot(p.L - q.L, p.C * Math.cos(ar) - q.C * Math.cos(br), p.C * Math.sin(ar) - q.C * Math.sin(br));
 }
 
-// ---------- 紧凑 ----------
+// ---------- 紧凑（Apple Music 风格：无边框封面头 + 丝绒双色微光背景 + 醒目主歌词层级） ----------
 
 const compact = {
-  coverMax: 80, coverMin: 0, center: true,
+  coverMax: 76, coverMin: 0, center: true,
   layout(ctx, env, p, draw) {
-    const st = env.st, ex = st.extras, fs = p.fs, w = env.fp.w;
+    const st = env.st, ex = st.extras, fs = p.fs, ls = env.lhScale || 1, w = env.fp.w;
     const c = env.pal;
     const align = st.align === 'center' ? 'center' : 'left';
     const off = p.off || 0;
     const padX = 40, innerW = 460;
-    if (draw) { ctx.fillStyle = c.bg; ctx.fillRect(0, 0, W, env.canvasH); }
+    if (draw) {
+      // Subtle velvety cover-derived backdrop: base tint + gentle directional depth + soft top-left bloom
+      ctx.fillStyle = c.bg;
+      ctx.fillRect(0, 0, W, env.canvasH);
+      const wash = ctx.createLinearGradient(0, 0, W * 0.85, env.canvasH);
+      wash.addColorStop(0, withAlpha(c.container, c.isDark ? 0.55 : 0.7));
+      wash.addColorStop(0.5, withAlpha(c.bg, 0));
+      wash.addColorStop(1, withAlpha(c.isDark ? '#000000' : c.container, c.isDark ? 0.24 : 0.45));
+      ctx.fillStyle = wash;
+      ctx.fillRect(0, 0, W, env.canvasH);
+      const bloom = ctx.createRadialGradient(padX + 44, 72 + off, 12, padX + 44, 72 + off, 360);
+      bloom.addColorStop(0, withAlpha(c.accent, c.isDark ? 0.16 : 0.12));
+      bloom.addColorStop(1, withAlpha(c.accent, 0));
+      ctx.fillStyle = bloom;
+      ctx.fillRect(0, 0, W, env.canvasH);
+    }
 
-    // Header: small cover beside the title, on a tonal container.
-    let y = 48 + off;
-    const cov = 80, hp = 16, hg = 18;
-    const metaX = padX + hp + cov + hg, metaW = innerW - hp * 2 - cov - hg;
+    // Floating Apple Music–style header: rounded cover + crisp bold title & soft artist directly on canvas
+    let y = 46 + off;
+    const cov = 76, hg = 18;
+    const metaX = padX + cov + hg, metaW = innerW - cov - hg;
     const metaOpts = {
       x: metaX, maxW: metaW, align: 'left', maxLines: 2,
-      tSize: 24 * fs, tLh: 32 * fs, tW: w.medium, tColor: c.on,
-      aSize: 16 * fs, aLh: 24 * fs, aW: w.regular, aColor: c.onVar, gap: 4,
+      tSize: 22 * fs, tLh: 28 * fs, tW: w.bold, tColor: c.on,
+      aSize: 15.5 * fs, aLh: 21 * fs, aW: w.regular, aColor: withAlpha(c.on, c.isDark ? 0.68 : 0.65), gap: 3,
     };
     const metaH = titleBlock(ctx, env, { ...metaOpts, y: 0, draw: false });
-    const headH = Math.max(cov, metaH) + hp * 2;
+    const headH = Math.max(cov, metaH);
     if (draw) {
-      ctx.fillStyle = c.container;
-      rr(ctx, padX, y, innerW, headH, 24); ctx.fill();
-      drawCoverCard(ctx, env.cover.source, padX + hp, y + (headH - cov) / 2, cov, 16, { color: c.shadow, blur: 20, y: 8, fill: c.container }, env.k);
+      drawCoverCard(
+        ctx, env.cover.source, padX, y + (headH - cov) / 2, cov, 14,
+        { color: c.shadow, blur: 22, y: 8, fill: c.bg }, env.k,
+      );
       titleBlock(ctx, env, { ...metaOpts, y: y + (headH - metaH) / 2, draw: true });
     }
-    y += headH + 40;
+    y += headH + 36;
 
-    // Lyrics: focused groups turn accent and bold, the rest step back.
-    const base = { oSize: 23 * fs, oLh: 34 * fs, oW: w.medium, tSize: 16 * fs, tLh: 25 * fs, tW: w.regular, gap: 6 * fs };
-    const bold = { ...base, oW: w.bold };
-    const lx = align === 'center' ? W / 2 : padX + 4, maxW = innerW - 8;
-    const ms = p.groups.map((g) => measureGroup(ctx, env, g, maxW, env.focus.has(g.idx) ? bold : base));
-    const gap = 28 * fs;
+    // Lyrics: Apple Music–inspired confident bold hierarchy; unfocused lines softly dim back
+    const base = {
+      oSize: 25.5 * fs, oLh: 35 * fs * ls, oW: w.bold,
+      tSize: 15.5 * fs, tLh: 23 * fs * ls, tW: w.regular,
+      gap: 5 * fs * ls,
+    };
+    const lx = align === 'center' ? W / 2 : padX, maxW = innerW;
+    const ms = p.groups.map((g) => measureGroup(ctx, env, g, maxW, base));
+    const gap = 26 * fs * ls;
     if (!ms.length) { placeholder(ctx, env, lx, y, align, c.onVar, draw); y += 22; }
     ms.forEach((m, i) => {
       if (i) y += gap;
       const on = env.focus.has(m.idx);
       if (draw) {
-        const col = !env.hasFocus ? { o: c.on, t: c.onVar }
-          : on ? { o: c.accent, t: c.onVar }
-          : { o: withAlpha(c.on, 0.5), t: withAlpha(c.onVar, 0.5) };
+        const subCol = withAlpha(c.on, c.isDark ? 0.68 : 0.66);
+        const col = !env.hasFocus ? { o: c.on, t: subCol }
+          : on ? { o: c.accent, t: withAlpha(c.on, c.isDark ? 0.84 : 0.8) }
+          : { o: withAlpha(c.on, 0.36), t: withAlpha(c.on, 0.32) };
         drawGroup(ctx, m, lx, y, col, align);
       }
-      pushHit(env, m.idx, padX, y, innerW, m.h, gap);
+      pushHit(env, m.idx, padX - 4, y, innerW + 8, m.h, gap);
       y += m.h;
     });
 
     if (env.sup.progress && ex.progress) {
-      y += 36;
+      y += 34;
       if (draw) {
         drawWave(ctx, padX, y + 10, innerW, progressFraction(ex), { active: c.accent, track: c.track }, 4, 3, 26);
         timesRow(ctx, env, padX, padX + innerW, y + 32, c.onVar);
@@ -228,10 +261,13 @@ const compact = {
     }
 
     y = footer(ctx, env, {
-      x: padX, right: padX + innerW, y, gapTop: 36, qrSize: 72, draw,
+      x: padX, right: padX + innerW, y, gapTop: 34, qrSize: 72, draw,
       c: { text: c.on, sub: c.onVar, date: c.onVar, qrFg: '#111111', qrBg: '#FFFFFF' },
     });
-    return y + 56 - off;
+    if (draw) {
+      drawSignature(ctx, env, withAlpha(c.on, c.isDark ? 0.4 : 0.38), padX + innerW, env.canvasH - 22);
+    }
+    return y + 54 - off;
   },
 };
 
@@ -271,10 +307,11 @@ const classic = {
     });
     y += 40;
 
-    const spec = { oSize: 21 * fs, oLh: 31 * fs, oW: w.medium, tSize: 14.5 * fs, tLh: 22 * fs, tW: w.regular, gap: 6 * fs };
+    const ls = env.lhScale || 1;
+    const spec = { oSize: 21 * fs, oLh: 31 * fs * ls, oW: w.medium, tSize: 14.5 * fs, tLh: 22 * fs * ls, tW: w.regular, gap: 6 * fs * ls };
     const lx = align === 'center' ? W / 2 : 36;
     const ms = p.groups.map((g) => measureGroup(ctx, env, g, 468, spec));
-    const gap = 32 * fs;
+    const gap = 32 * fs * ls;
     if (!ms.length) { placeholder(ctx, env, lx, y, align, c.onVar, draw); y += 22; }
     ms.forEach((m, i) => {
       if (i) y += gap;
@@ -288,6 +325,9 @@ const classic = {
       x: 36, right: 504, y, gapTop: 52, qrSize: 64, draw,
       c: { text: c.on, sub: c.onVar, date: c.onVar, qrFg: '#111111', qrBg: '#FFFFFF' },
     });
+    if (draw) {
+      drawSignature(ctx, env, withAlpha(c.on, c.isDark ? 0.38 : 0.36), 504, env.canvasH - 24);
+    }
     return y + 64;
   },
 };
@@ -351,15 +391,16 @@ function photoHeader(ctx, env, ink) {
 
 /** Lyrics for the photo templates: bottom-aligned; focus is marked by brightness only. */
 function photoLyrics(ctx, env, p, H, draw) {
-  const st = env.st, ex = st.extras, fs = p.fs, w = env.fp.w;
-  const spec = { oSize: 28 * fs, oLh: 38 * fs, oW: w.bold, tSize: 16 * fs, tLh: 24 * fs, tW: w.regular, gap: 6 * fs };
-  const gap = 28 * fs;
+  const st = env.st, ex = st.extras, fs = p.fs, ls = env.lhScale || 1, w = env.fp.w;
+  const spec = { oSize: 28 * fs, oLh: 38 * fs * ls, oW: w.bold, tSize: 16 * fs, tLh: 24 * fs * ls, tW: w.regular, gap: 6 * fs * ls };
+  const gap = 28 * fs * ls;
   const ms = p.groups.map((g) => measureGroup(ctx, env, g, 476, spec));
   const lyrH = ms.length ? stackHeight(ms, gap) : 22;
   const showProg = env.sup.progress && ex.progress;
+  const padBot = st.watermark ? 44 : 32;
   const bottom = showProg ? 32 + 42 : 0;
-  const natural = 32 + 64 + 32 + lyrH + bottom + 32;
-  const top = Math.max(128, (H || natural) - 32 - bottom - lyrH);
+  const natural = 32 + 64 + 32 + lyrH + bottom + padBot;
+  const top = Math.max(128, (H || natural) - padBot - bottom - lyrH);
   return {
     natural, top, showProg,
     draw(ink) {
@@ -377,10 +418,11 @@ function photoLyrics(ctx, env, p, H, draw) {
         ly += m.h;
       });
       if (showProg) {
-        const py = H - 32 - 42;
+        const py = H - padBot - 42;
         drawWave(ctx, 32, py + 10, 476, progressFraction(ex), { active: ink.wave, track: ink.track }, 4, 3, 30);
         timesRow(ctx, env, 32, W - 32, py + 34, ink.time);
       }
+      drawSignature(ctx, env, env.darkMode ? 'rgba(255, 255, 255, 0.44)' : 'rgba(21, 23, 28, 0.42)', W - 32, H - 17);
     },
   };
 }
@@ -506,9 +548,10 @@ const quiet = {
     const minGap = baseH <= 600 ? 32 : 52;
     const cs = fixedH ? Math.min(p.cover, Math.round(fixedH * 0.3)) : p.cover;
 
-    const spec = { oSize: 20 * fs, oLh: 30 * fs, oW: w.medium, tSize: 13.5 * fs, tLh: 20.5 * fs, tW: w.regular, gap: 5 * fs };
+    const ls = env.lhScale || 1;
+    const spec = { oSize: 20 * fs, oLh: 30 * fs * ls, oW: w.medium, tSize: 13.5 * fs, tLh: 20.5 * fs * ls, tW: w.regular, gap: 5 * fs * ls };
     const boldSpec = { ...spec, oW: w.bold };
-    const gap = 22 * fs;
+    const gap = 22 * fs * ls;
     const ms = p.groups.map((g) => measureGroup(ctx, env, g, 460, env.focus.has(g.idx) ? boldSpec : spec));
     const lyrH = ms.length ? stackHeight(ms, gap) : 22;
 
@@ -602,8 +645,9 @@ const quiet = {
       ctx.fillStyle = c.ink2;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(ellipsize(ctx, n, 460), 40, env.canvasH - 36);
+      ctx.fillText(ellipsize(ctx, n, st.watermark ? 340 : 460), 40, env.canvasH - 36);
     }
+    drawSignature(ctx, env, withAlpha(P.on, P.isDark ? 0.38 : 0.36), W - 40, showNote ? env.canvasH - 36 : env.canvasH - 26);
     return need;
   },
 };

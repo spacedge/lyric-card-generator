@@ -4,10 +4,10 @@
  */
 import { FONT_CSS_URL, APP_VERSION } from './config.js';
 import * as store from './storage.js';
-import { FALLBACK_SEED, makeScheme, analyzeCover } from './color.js';
+import { FALLBACK_SEED, makeScheme, analyzeCover, rgbToHex } from './color.js';
 import { hasRuby, stripRuby } from './ruby.js';
 import {
-  TEMPLATE_INFO, TEMPLATE_ORDER, FONT_PRESETS, DESIGN_WIDTH, BLUR_LEVELS,
+  TEMPLATE_INFO, TEMPLATE_ORDER, FONT_PRESETS, DESIGN_WIDTH, BLUR_LEVELS, LINE_GAPS,
   makeDefaultCover, prepareCover, renderCard, fontsToLoad, groupsOf, ratioFor, modeOf, fallbackAnalysis,
 } from './render/index.js';
 
@@ -16,13 +16,13 @@ import {
  * ==================================================================== */
 
 const PARSE_MODES = ['bilingual', 'blocks', 'single'];
-const VARIANTS = ['content', 'tonal', 'vibrant', 'mono'];
 const RATIOS = ['auto', '4:5', '9:16', '1:1'];
 const DARK_MODES = ['auto', 'light', 'dark'];
 const DRAG_SLOP = 6;   // px a pointer may move before a tap on the preview becomes a drag
 const ALIGNS = ['left', 'center'];
 const TABS = ['content', 'color', 'type', 'extra'];
 const MOBILE_TABS = ['content', 'template', 'color', 'type', 'extra'];
+const EXPORT_SCALE = 2;
 const EXTRA_KEYS = ['date', 'note', 'progress', 'qr'];
 const EXTRA_TEXT = {
   dateText: 40, noteText: 60, cur: 8, dur: 8, link: 500, source: 40,
@@ -60,13 +60,6 @@ const THEME_TOKENS = [
   ['--inverse-surface', 'inverseSurface'], ['--inverse-on-surface', 'inverseOnSurface'], ['--inverse-primary', 'inversePrimary'],
 ];
 
-const VARIANT_HELP = {
-  content: '用封面里选中的颜色本身。',
-  tonal: '同一色相，颜色调淡，偏浅或偏深。',
-  vibrant: '这个色相最鲜艳的一档，像海报。',
-  mono: '灰色背景，只有重点句保留封面的强调色。',
-};
-const NO_STYLE_HELP = '沉浸和景深直接用封面画面当背景，没有风格之分。';
 const DARK_HELP = {
   auto: '自动：暗的封面出深色卡，亮的封面出浅色卡。',
   light: '固定出浅色卡。',
@@ -148,6 +141,8 @@ function defaultState() {
     depthX: null,
     font: 'sans',
     scale: 1,
+    lineGap: 'normal',
+    watermark: true,
     align: 'left',
     showTrans: true,
     showRuby: true,
@@ -165,7 +160,6 @@ function defaultMeta() {
   return {
     tab: 'content',
     mobileTab: 'content',
-    quality: 2,
     dateEdited: false,
     customFontName: '',
   };
@@ -200,12 +194,13 @@ function cacheEls() {
     'coverThumb', 'coverBtn', 'coverInput',
     'fTitle', 'fArtist', 'fLyrics', 'pasteLyricsBtn', 'clearLyricsBtn',
     'modeSeg', 'modeHelp', 'focusDisclosure', 'focusBadge', 'pickList', 'pickClear',
-    'swatches', 'variantRow', 'variantSeg', 'variantHelp', 'darkSeg', 'darkHelp',
+    'swatches', 'eyedropBtn', 'eyedropBox', 'eyedropStage', 'eyedropCanvas', 'eyedropLoupe', 'eyedropDot', 'eyedropHex', 'eyedropDone',
+    'darkSeg', 'darkHelp',
     'ratioHelp', 'blurRow', 'blurSeg', 'cropRow', 'fCrop', 'cropAuto',
     'fontChips', 'customChip', 'fontBtn', 'fontInput', 'fontHelp',
-    'fScale', 'scaleOut', 'scaleReset', 'alignSeg', 'swTrans', 'rubyRow', 'swRuby',
+    'fScale', 'scaleOut', 'scaleReset', 'lineGapSeg', 'alignSeg', 'swTrans', 'rubyRow', 'swRuby',
     'resetBtn', 'exportBtn',
-    'exportDlg', 'exportClose', 'exportImg', 'exportHint', 'exportInfo', 'qualitySeg', 'saveBtn', 'shareBtn', 'copyBtn',
+    'exportDlg', 'exportClose', 'exportImg', 'exportHint', 'exportInfo', 'swWatermark', 'saveBtn', 'shareBtn', 'copyBtn',
     'snack', 'dynTheme',
   ];
   for (const id of ids) els[id] = $(id);
@@ -267,7 +262,6 @@ function flushSave() {
     meta: {
       tab: meta.tab,
       mobileTab: meta.mobileTab,
-      quality: meta.quality,
       dateEdited: meta.dateEdited,
     },
   });
@@ -290,7 +284,7 @@ function applySaved(saved) {
     if (PARSE_MODES.includes(s.parseMode)) state.parseMode = s.parseMode;
     if (Array.isArray(s.focus)) state.focus = normFocus(s.focus);
     if (isHex(s.seed)) { state.seed = s.seed.toUpperCase(); result.seed = true; }
-    if (VARIANTS.includes(s.variant)) state.variant = s.variant;
+    state.variant = 'content';
     if (isPlain(s.dark)) {
       // older saves stored booleans; modeOf maps them to 'dark' / 'light'
       for (const t of TEMPLATE_ORDER) if (has(s.dark, t)) state.dark[t] = modeOf(s.dark[t]);
@@ -301,6 +295,8 @@ function applySaved(saved) {
     if (typeof s.depthX === 'number' && Number.isFinite(s.depthX)) state.depthX = clamp(s.depthX, 0, 1);
     if (typeof s.font === 'string' && has(FONT_PRESETS, s.font)) state.font = s.font;
     if (typeof s.scale === 'number' && Number.isFinite(s.scale)) state.scale = clamp(s.scale, 0.8, 1.3);
+    if (LINE_GAPS.includes(s.lineGap)) state.lineGap = s.lineGap;
+    if (typeof s.watermark === 'boolean') state.watermark = s.watermark;
     if (ALIGNS.includes(s.align)) state.align = s.align;
     if (typeof s.showTrans === 'boolean') state.showTrans = s.showTrans;
     if (typeof s.showRuby === 'boolean') state.showRuby = s.showRuby;
@@ -317,7 +313,6 @@ function applySaved(saved) {
   if (isPlain(m)) {
     if (TABS.includes(m.tab)) meta.tab = m.tab;
     if (MOBILE_TABS.includes(m.mobileTab)) meta.mobileTab = m.mobileTab;
-    if (m.quality === 2 || m.quality === 4) meta.quality = m.quality;
     if (typeof m.dateEdited === 'boolean') meta.dateEdited = m.dateEdited;
   }
   if (!meta.dateEdited) state.extras.dateText = todayText();
@@ -423,20 +418,24 @@ async function decodeImage(blob) {
   return decodeViaImg(blob);
 }
 
-function drawCoverThumb(source) {
-  const c = els.coverThumb;
-  const ctx = c.getContext('2d');
+function drawSquareCrop(canvas, source) {
+  const ctx = canvas && canvas.getContext('2d');
   if (!ctx || !source) return;
   const { w, h } = sourceSize(source);
   if (!w || !h) return;
   const s = Math.min(w, h);
-  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingQuality = 'high';
   try {
-    ctx.drawImage(source, (w - s) / 2, (h - s) / 2, s, s, 0, 0, c.width, c.height);
+    ctx.drawImage(source, (w - s) / 2, (h - s) / 2, s, s, 0, 0, canvas.width, canvas.height);
   } catch (err) {
-    console.warn('[歌词卡片] 封面缩略图失败', err);
+    console.warn('[歌词卡片] 封面绘制失败', err);
   }
+}
+
+function drawCoverThumb(source) {
+  drawSquareCrop(els.coverThumb, source);
+  drawSquareCrop(els.eyedropCanvas, source);
 }
 
 /** Swatch colours and the rest of the cover analysis; a broken analysis falls back to the default seed. */
@@ -720,7 +719,7 @@ function drawMiniThumb() {
 function updateStatusSize() {
   if (!lastRes) return;
   const h = lastRes.height;
-  let k = meta.quality;
+  let k = EXPORT_SCALE;
   if (DESIGN_WIDTH * k * h * k > MAX_EXPORT_AREA) k = Math.sqrt(MAX_EXPORT_AREA / (DESIGN_WIDTH * h));
   const pw = Math.max(1, Math.round(DESIGN_WIDTH * k));
   const ph = Math.max(1, Math.round(h * k));
@@ -968,15 +967,6 @@ function syncDark() {
   els.darkHelp.textContent = DARK_HELP[mode];
 }
 
-function syncStyle() {
-  const sup = TEMPLATE_INFO[state.template].supports;
-  const buttons = qsa('button[data-v]', els.variantSeg);
-  for (const b of buttons) b.disabled = !sup.style;
-  if (sup.style) setPressed(els.variantSeg, state.variant);
-  else for (const b of buttons) b.setAttribute('aria-pressed', 'false');
-  els.variantHelp.textContent = sup.style ? VARIANT_HELP[state.variant] : NO_STYLE_HELP;
-}
-
 /** 景深 crop slider: shows the chosen point, or the cover's own focus while on auto. */
 function syncCrop() {
   const auto = state.depthX === null;
@@ -992,7 +982,6 @@ function syncTemplateUI() {
   for (const b of els.tileBtns) b.setAttribute('aria-pressed', String(b.dataset.t === t));
   syncRatio();
   syncDark();
-  syncStyle();
   els.blurRow.hidden = !sup.blur;
   if (sup.blur) setPressed(els.blurSeg, state.blur[t]);
   els.cropRow.hidden = !sup.crop;
@@ -1163,8 +1152,9 @@ function syncAll() {
   syncLyricsActions();
   setPressed(els.modeSeg, state.parseMode);
   syncModeHelp();
+  setPressed(els.lineGapSeg, state.lineGap);
   setPressed(els.alignSeg, state.align);
-  setPressed(els.qualitySeg, meta.quality);
+  setSwitch(els.swWatermark, state.watermark);
   setSwitch(els.swTrans, state.showTrans);
   setSwitch(els.swRuby, state.showRuby);
   syncScaleUI();
@@ -1295,6 +1285,54 @@ function syncSwatches() {
   customSwatch.el.classList.toggle('is-on', !matched);
   customSwatch.face.style.background = matched ? '' : cur;
   if (!matched && customSwatch.input.value.toUpperCase() !== cur) customSwatch.input.value = cur.toLowerCase();
+  if (els.eyedropDot) els.eyedropDot.style.background = cur;
+  if (els.eyedropHex) els.eyedropHex.textContent = cur;
+}
+
+function setEyedropperOpen(open) {
+  if (!els.eyedropBox) return;
+  const on = !!open;
+  els.eyedropBox.hidden = !on;
+  els.eyedropBtn.setAttribute('aria-expanded', String(on));
+  if (on) {
+    if (coverSource) drawSquareCrop(els.eyedropCanvas, coverSource);
+    requestAnimationFrame(() => els.eyedropBox.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+  } else if (els.eyedropLoupe) {
+    els.eyedropLoupe.hidden = true;
+  }
+}
+
+function sampleEyedropper(clientX, clientY, showLoupe) {
+  const cv = els.eyedropCanvas;
+  const ctx = cv && cv.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return;
+  const rect = cv.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const nx = clamp((clientX - rect.left) / rect.width, 0, 0.999);
+  const ny = clamp((clientY - rect.top) / rect.height, 0, 0.999);
+  const px = Math.floor(nx * cv.width);
+  const py = Math.floor(ny * cv.height);
+  const x0 = Math.max(0, px - 1), y0 = Math.max(0, py - 1);
+  const w = Math.min(cv.width - x0, 3), h = Math.min(cv.height - y0, 3);
+  try {
+    const data = ctx.getImageData(x0, y0, w, h).data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < data.length; i += 4) { r += data[i]; g += data[i + 1]; b += data[i + 2]; n += 1; }
+    if (!n) return;
+    const hex = rgbToHex([r / n, g / n, b / n]);
+    if (els.eyedropLoupe) {
+      els.eyedropLoupe.hidden = !showLoupe;
+      els.eyedropLoupe.style.left = `${(nx * 100).toFixed(1)}%`;
+      els.eyedropLoupe.style.top = `${(ny * 100).toFixed(1)}%`;
+      els.eyedropLoupe.style.background = hex;
+    }
+    if (state.seed !== hex) {
+      state.seed = hex;
+      onSeedChanged();
+    }
+  } catch (err) {
+    console.warn('[歌词卡片] 封面吸色失败', err);
+  }
 }
 
 function onSeedChanged() {
@@ -1567,12 +1605,27 @@ function bindEditor() {
     state.seed = b.dataset.seed;
     onSeedChanged();
   });
-  onSeg(els.variantSeg, (v) => {
-    if (!VARIANTS.includes(v) || !TEMPLATE_INFO[state.template].supports.style) return;
-    state.variant = v;
-    syncStyle();
-    touch();
+  els.eyedropBtn.addEventListener('click', () => setEyedropperOpen(els.eyedropBox.hidden));
+  els.eyedropDone.addEventListener('click', () => setEyedropperOpen(false));
+  let eyedropId = null;
+  els.eyedropCanvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    eyedropId = e.pointerId;
+    try { els.eyedropCanvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    sampleEyedropper(e.clientX, e.clientY, true);
   });
+  els.eyedropCanvas.addEventListener('pointermove', (e) => {
+    if (eyedropId !== e.pointerId) return;
+    sampleEyedropper(e.clientX, e.clientY, true);
+  });
+  const endEyedrop = (e) => {
+    if (eyedropId !== e.pointerId) return;
+    eyedropId = null;
+    if (els.eyedropLoupe) els.eyedropLoupe.hidden = true;
+  };
+  els.eyedropCanvas.addEventListener('pointerup', endEyedrop);
+  els.eyedropCanvas.addEventListener('pointercancel', endEyedrop);
+
   onSeg(els.darkSeg, (v) => {
     if (!DARK_MODES.includes(v)) return;
     state.dark[state.template] = v;
@@ -1623,6 +1676,12 @@ function bindEditor() {
     syncScaleUI();
     touch();
     flash('字号已恢复 100%');
+  });
+  onSeg(els.lineGapSeg, (v) => {
+    if (!LINE_GAPS.includes(v) || v === state.lineGap) return;
+    state.lineGap = v;
+    setPressed(els.lineGapSeg, v);
+    touch();
   });
   onSeg(els.alignSeg, (v) => {
     if (!ALIGNS.includes(v)) return;
@@ -1828,14 +1887,14 @@ async function generateExport() {
     await delay(30);
     if (token !== exp.token) return;
     const canvas = document.createElement('canvas');
-    const res = renderCard(canvas, state, assets, { scale: meta.quality, purpose: 'export' });
+    const res = renderCard(canvas, state, assets, { scale: EXPORT_SCALE, purpose: 'export' });
     const blob = await canvasToBlob(canvas);
     canvas.width = canvas.height = 1;
     if (token !== exp.token) return;
     if (!blob) throw new Error('toBlob returned null');
 
     // Data URL allows Android in-app WebViews (Bilibili/QQ/WeChat) to save on long-press
-    // without failing on blob: URLs; keep blob: as fallback for huge 4K PNGs and <a download>.
+    // without failing on blob: URLs; keep blob: as fallback for huge PNGs and <a download>.
     const imgSrc = blob.size <= MAX_DATA_URL_BYTES ? await blobToDataUrl(blob) : '';
     if (token !== exp.token) return;
 
@@ -1854,12 +1913,7 @@ async function generateExport() {
     els.exportImg.removeAttribute('src');
     els.exportInfo.textContent = '生成失败';
     setExportBusy(false);
-    toast(
-      meta.quality === 4
-        ? '图片太大，生成失败，请改选“标准 1080 宽”重试。'
-        : '图片生成失败，请关闭重试或换一张小一点的封面。',
-      true,
-    );
+    toast('图片生成失败，请关闭重试或换一张小一点的封面。', true);
   }
 }
 
@@ -1900,7 +1954,7 @@ function openExport(opener) {
   document.body.classList.add('modal-open');
   setInert(true);
   document.addEventListener('keydown', onDialogKey, true);
-  setPressed(els.qualitySeg, meta.quality);
+  setSwitch(els.swWatermark, state.watermark);
   let probe = null;
   try { probe = new File([''], 'a.png', { type: 'image/png' }); } catch { /* ignore */ }
   layoutActions(probe);
@@ -1986,13 +2040,10 @@ function bindExport() {
   els.exportDlg.addEventListener('click', (e) => {
     if (e.target === els.exportDlg) closeExport();
   });
-  onSeg(els.qualitySeg, (v) => {
-    const q = Number(v);
-    if (q !== 2 && q !== 4) return;
-    meta.quality = q;
-    setPressed(els.qualitySeg, q);
-    updateStatusSize();
-    scheduleSave();
+  els.swWatermark.addEventListener('click', () => {
+    state.watermark = !state.watermark;
+    setSwitch(els.swWatermark, state.watermark);
+    touch({ thumbs: false });
     generateExport();
   });
   els.saveBtn.addEventListener('click', saveExport);
@@ -2042,6 +2093,7 @@ async function resetAll() {
   themeSeed = '';
 
   syncAll();
+  setEyedropperOpen(false);
   drawCoverThumb(coverSource);
   buildSwatches();
   applyTheme();
@@ -2150,6 +2202,7 @@ async function boot() {
   await Promise.race([restoring, delay(400)]);
 
   syncAll();
+  setEyedropperOpen(false);
   drawCoverThumb(coverSource);
   buildSwatches();
   applyTheme();

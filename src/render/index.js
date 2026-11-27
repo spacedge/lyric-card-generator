@@ -22,6 +22,8 @@ export const TEMPLATE_INFO = {
 };
 export const TEMPLATE_ORDER = ['compact', 'classic', 'immersive', 'depth', 'quiet'];
 export const BLUR_LEVELS = ['light', 'mid', 'heavy'];
+export const LINE_GAPS = ['tight', 'normal', 'loose'];
+export const LINE_GAP_MULT = { tight: 0.86, normal: 1, loose: 1.2 };
 
 export const FONT_PRESETS = {
   sans: { label: '黑体' }, serif: { label: '明朝' }, round: { label: '圆体' }, hand: { label: '手写' }, custom: { label: '导入的字体' },
@@ -76,11 +78,13 @@ function normalize(state) {
   const blur = { immersive: 'mid', depth: 'mid' };
   for (const t of ['immersive', 'depth']) if (BLUR_LEVELS.includes(state.blur?.[t])) blur[t] = state.blur[t];
   const depthX = typeof state.depthX === 'number' && Number.isFinite(state.depthX) ? Math.min(1, Math.max(0, state.depthX)) : null;
+  const lineGap = LINE_GAPS.includes(state.lineGap) ? state.lineGap : 'normal';
+  const watermark = state.watermark !== false;
   return {
     template: 'compact', title: '', artist: '', lyrics: '', parseMode: 'bilingual', focus: [], seed: FALLBACK_SEED,
-    variant: 'content', font: 'sans', scale: 1, align: 'left', showTrans: true, showRuby: true, ratio: 'auto',
+    variant: 'content', font: 'sans', scale: 1, lineGap, watermark, align: 'left', showTrans: true, showRuby: true, ratio: 'auto',
     ...state,
-    dark, blur, depthX,
+    dark, blur, depthX, lineGap, watermark,
     extras: { ...EXTRA_DEFAULTS, ...(state.extras || {}) },
   };
 }
@@ -141,6 +145,7 @@ export function renderCard(canvas, state, assets, opts = {}) {
     st, assets, analysis, cover: assets.cover, fp: preset(st),
     pal: cardPalette({ seed: st.seed || FALLBACK_SEED, accent: analysis.accent, style: st.variant || 'content', mode, meanL: analysis.meanL }),
     darkMode: resolveDark(mode, analysis.meanL),
+    lhScale: LINE_GAP_MULT[st.lineGap] || 1,
     sup: info.supports, groups, focus, hasFocus: focus.size > 0, H, k: 1, hits: [], canvasH: 0,
     ruby: { o: groups.some((g) => hasRubySeg(g.os)), t: !!st.showTrans && groups.some((g) => hasRubySeg(g.ts)) },
     purpose: opts.purpose || 'preview',

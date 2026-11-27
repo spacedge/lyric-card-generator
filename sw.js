@@ -11,8 +11,8 @@
  */
 'use strict';
 
-const CACHE = 'lyric-card-v13';
-const FONT_CACHE = 'lyric-card-fonts-v13';
+const CACHE = 'lyric-card-v14';
+const FONT_CACHE = 'lyric-card-fonts-v14';
 const KEEP = [CACHE, FONT_CACHE];
 
 // 相对 sw.js 所在目录，页面放在任何子路径都成立
