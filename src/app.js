@@ -44,6 +44,10 @@ const THUMB_SCALE = 0.45;
 const MAX_FONT_BYTES = 80 * 1024 * 1024;
 const MAX_COVER_EDGE = 3000;
 const MAX_EXPORT_AREA = 16e6;
+const MAX_DATA_URL_BYTES = 10 * 1024 * 1024;
+const DRAWER_PEEK = 28;
+const DRAWER_MIN_OPEN = 84;
+const DRAWER_MAX_FRAC = 0.72;
 
 const THEME_TOKENS = [
   ['--primary', 'primary'], ['--on-primary', 'onPrimary'],
@@ -170,7 +174,7 @@ function defaultMeta() {
 const state = defaultState();
 const assets = { cover: null, analysis: null, seeds: [FALLBACK_SEED], customFont: false };
 const meta = defaultMeta();
-const mobileUI = { drawerOpen: true };
+const mobileUI = { drawerOpen: true, drawerHeight: null };
 
 const defaults = { source: null, cover: null, analysis: null };
 let coverSource = null;
@@ -206,6 +210,7 @@ function cacheEls() {
   ];
   for (const id of ids) els[id] = $(id);
   els.panelTemplate = $('panel-template');
+  els.layout = document.querySelector('main.layout');
   els.themeColor = document.querySelector('meta[name="theme-color"]');
   els.dialog = els.exportDlg.querySelector('.dialog');
   els.exportStage = els.exportDlg.querySelector('.export-stage');
@@ -678,7 +683,9 @@ function previewWidth(aspectHint) {
   const stageH = Math.max(120, (els.stage.clientHeight || Math.round(window.innerHeight * 0.48)) - 8);
   const hw = RATIO_HW[ratioFor(state.template, state.ratio)] || aspectHint || (lastRes ? lastRes.height / lastRes.width : 1.5);
   const fitByHeight = stageH / hw;
-  const minFloor = mobileUI.drawerOpen ? Math.min(stageW, 108) : Math.min(stageW, 172);
+  const minFloor = (mobileUI.drawerOpen || els.editorPanel.classList.contains('dragging-drawer'))
+    ? Math.min(stageW, 108)
+    : Math.min(stageW, 172);
   const maxCap = mobileUI.drawerOpen ? stageW : Math.min(stageW, PREVIEW_MAX.phoneFull);
   const w = Math.min(maxCap, Math.max(minFloor, fitByHeight));
   return Math.max(100, Math.floor(w));
@@ -776,7 +783,9 @@ function renderPreview() {
 }
 
 function onResize() {
-  syncNavigation({ scrollPanel: false });
+  if (!els.editorPanel.classList.contains('dragging-drawer')) {
+    syncNavigation({ scrollPanel: false });
+  }
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   if (previewWidth() !== lastCssW || dpr !== lastDpr) requestRender();
 }
@@ -852,6 +861,10 @@ function bindPreviewPointer() {
   cv.addEventListener('pointerleave', () => cv.classList.remove('can-pick'));
   cv.addEventListener('click', (e) => {
     if (drag.suppressClick) { drag.suppressClick = false; return; }
+    if (!desktopMQ.matches && mobileUI.drawerOpen) {
+      setMobileDrawer(false);
+      return;
+    }
     const h = hitAt(e);
     if (h) toggleFocus(h.index);
   });
@@ -1025,13 +1038,30 @@ function syncModeHelp() {
   els.modeHelp.textContent = MODE_HELP[state.parseMode] || '';
 }
 
+function clearDrawerInlineSize() {
+  els.editorPanel.style.flex = '';
+  els.editorPanel.style.height = '';
+  els.editorPanel.style.maxHeight = '';
+  els.editorPanel.style.transform = '';
+}
+
+function drawerHeightLimits(tabName) {
+  const layoutH = (els.layout && els.layout.clientHeight) || Math.max(360, window.innerHeight - 116);
+  const maxFracH = Math.max(220, Math.round(layoutH * DRAWER_MAX_FRAC));
+  if (tabName === 'content') return { minH: DRAWER_PEEK, maxH: maxFracH };
+  const panelEl = tabName === 'template' ? els.panelTemplate : $(`panel-${tabName}`);
+  const contentH = panelEl ? (DRAWER_PEEK + panelEl.scrollHeight) : maxFracH;
+  const maxH = Math.min(maxFracH, Math.max(contentH, 180));
+  return { minH: DRAWER_PEEK, maxH: Math.max(DRAWER_MIN_OPEN + 20, maxH) };
+}
+
 function syncNavigation({ scrollPanel = false } = {}) {
   const desktop = desktopMQ.matches;
 
   if (desktop) {
     document.body.classList.remove('mobile-compact-preview', 'mobile-drawer-closed');
     els.editorPanel.classList.remove('dragging-drawer');
-    els.editorPanel.style.transform = '';
+    clearDrawerInlineSize();
     els.panelTemplate.hidden = false;
     for (const b of els.tabBtns) {
       const on = b.dataset.tab === meta.tab;
@@ -1039,10 +1069,11 @@ function syncNavigation({ scrollPanel = false } = {}) {
       b.tabIndex = on ? 0 : -1;
       $(`panel-${b.dataset.tab}`).hidden = !on;
     }
+    syncPickerState();
     return;
   }
 
-  // Phone layout: bottom nav drives collapsible adaptive bottom drawer
+  // Phone layout: bottom nav drives draggable, pause-anywhere bottom drawer
   const cur = MOBILE_TABS.includes(meta.mobileTab) ? meta.mobileTab : 'content';
   meta.mobileTab = cur;
   els.panelTemplate.hidden = cur !== 'template';
@@ -1054,18 +1085,36 @@ function syncNavigation({ scrollPanel = false } = {}) {
     b.setAttribute('aria-selected', String(on));
   }
 
-  const compact = mobileUI.drawerOpen && cur === 'content';
+  const compact = mobileUI.drawerOpen && cur === 'content' && mobileUI.drawerHeight === null;
   document.body.classList.toggle('mobile-drawer-closed', !mobileUI.drawerOpen);
   document.body.classList.toggle('mobile-compact-preview', compact);
 
+  if (mobileUI.drawerOpen && mobileUI.drawerHeight !== null) {
+    const { maxH } = drawerHeightLimits(cur);
+    const clampedH = clamp(Math.round(mobileUI.drawerHeight), DRAWER_MIN_OPEN, maxH);
+    mobileUI.drawerHeight = clampedH;
+    els.editorPanel.style.flex = '0 0 auto';
+    els.editorPanel.style.height = `${clampedH}px`;
+    els.editorPanel.style.maxHeight = 'none';
+  } else {
+    clearDrawerInlineSize();
+  }
+
+  els.drawerCollapseBtn.setAttribute('aria-expanded', String(mobileUI.drawerOpen));
+  els.drawerCollapseBtn.setAttribute(
+    'aria-label',
+    mobileUI.drawerOpen ? '拖动调节高度或轻点收起设置面板' : '上拉或轻点展开设置面板',
+  );
+
   if (scrollPanel && els.editorPanel) els.editorPanel.scrollTop = 0;
+  syncPickerState();
 }
 
-function setMobileDrawer(open) {
+function setMobileDrawer(open, height = null) {
   if (desktopMQ.matches) return;
   mobileUI.drawerOpen = !!open;
+  mobileUI.drawerHeight = open ? (typeof height === 'number' ? height : null) : null;
   els.editorPanel.classList.remove('dragging-drawer');
-  els.editorPanel.style.transform = '';
   syncNavigation();
   requestRender();
 }
@@ -1087,6 +1136,7 @@ function selectMobileTab(name, { save = true, toggle = false } = {}) {
   meta.mobileTab = name;
   if (TABS.includes(name)) meta.tab = name;
   mobileUI.drawerOpen = true;
+  mobileUI.drawerHeight = null;
   syncNavigation({ scrollPanel: true });
   requestRender();
   if (save) scheduleSave();
@@ -1175,7 +1225,10 @@ function syncPickerState() {
   els.pickClear.disabled = n === 0;
   els.focusBadge.textContent = n ? `已选 ${n} 句` : '未选';
   els.focusBadge.classList.toggle('has-focus', n > 0);
-  els.focusHint.textContent = n ? `已选 ${n} 句重点` : '点击图上句子可设为重点';
+  const mobileDrawerOpen = !desktopMQ.matches && mobileUI.drawerOpen;
+  els.focusHint.textContent = mobileDrawerOpen
+    ? (n ? `已选 ${n} 句重点 · 轻点预览看大图` : '轻点预览图可收起面板看大图')
+    : (n ? `已选 ${n} 句重点` : '点击图上句子可设为重点');
   els.quickClearFocus.hidden = n === 0;
 }
 
@@ -1320,34 +1373,85 @@ function bindEditor() {
     }
   });
 
-  // 手机端抽屉顶栏把手：轻点或下拉收起抽屉
+  // 手机端抽屉顶栏把手：支持上下跟手拖动并在任意高度暂停，划到底保留可随时上拉的把手条
   let drawerDrag = null;
   els.drawerBar.addEventListener('pointerdown', (e) => {
-    if (desktopMQ.matches || !mobileUI.drawerOpen || (e.pointerType === 'mouse' && e.button !== 0)) return;
-    drawerDrag = { id: e.pointerId, startY: e.clientY, dy: 0 };
-    els.editorPanel.classList.add('dragging-drawer');
+    if (desktopMQ.matches || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const startH = Math.round(els.editorPanel.getBoundingClientRect().height);
+    drawerDrag = {
+      id: e.pointerId,
+      startY: e.clientY,
+      lastY: e.clientY,
+      lastT: performance.now(),
+      vy: 0,
+      startH,
+      curH: startH,
+      wasOpen: mobileUI.drawerOpen,
+      wasCompact: document.body.classList.contains('mobile-compact-preview'),
+      moved: false,
+      maxH: 0,
+    };
     try { els.drawerBar.setPointerCapture(e.pointerId); } catch { /* ignore */ }
   });
   els.drawerBar.addEventListener('pointermove', (e) => {
     if (!drawerDrag || e.pointerId !== drawerDrag.id) return;
-    const dy = Math.max(0, e.clientY - drawerDrag.startY);
-    drawerDrag.dy = dy;
-    els.editorPanel.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
+    const rawDy = e.clientY - drawerDrag.startY;
+    if (!drawerDrag.moved && Math.abs(rawDy) < 5) return;
+    if (!drawerDrag.moved) {
+      drawerDrag.moved = true;
+      els.editorPanel.classList.add('dragging-drawer');
+      // Reveal active panel immediately when pulling up from collapsed handle or pulling down from compact Content
+      if (!drawerDrag.wasOpen) document.body.classList.remove('mobile-drawer-closed');
+      if (drawerDrag.wasCompact) document.body.classList.remove('mobile-compact-preview');
+      const limits = drawerHeightLimits(meta.mobileTab);
+      drawerDrag.maxH = limits.maxH;
+      if (drawerDrag.wasCompact) {
+        drawerDrag.startH = Math.min(drawerDrag.startH, limits.maxH);
+      }
+    }
+    const now = performance.now();
+    const dt = Math.max(1, now - drawerDrag.lastT);
+    drawerDrag.vy = (e.clientY - drawerDrag.lastY) / dt;
+    drawerDrag.lastY = e.clientY;
+    drawerDrag.lastT = now;
+
+    const nextH = clamp(drawerDrag.startH - rawDy, DRAWER_PEEK, drawerDrag.maxH);
+    drawerDrag.curH = nextH;
+    els.editorPanel.style.flex = '0 0 auto';
+    els.editorPanel.style.height = `${Math.round(nextH)}px`;
+    els.editorPanel.style.maxHeight = 'none';
+    requestRender();
   });
   const endDrawerDrag = (e) => {
     if (!drawerDrag || e.pointerId !== drawerDrag.id) return;
-    const { dy } = drawerDrag;
+    const d = drawerDrag;
     drawerDrag = null;
     els.editorPanel.classList.remove('dragging-drawer');
-    els.editorPanel.style.transform = '';
-    if (e.type === 'pointerup' && (dy > 36 || Math.abs(dy) < 8)) {
+
+    if (e.type === 'pointercancel') {
+      syncNavigation();
+      requestRender();
+      return;
+    }
+    if (!d.moved) {
+      // Tap on handle toggles collapsed <-> default open
+      setMobileDrawer(!d.wasOpen, null);
+      return;
+    }
+    const closeByFlick = d.vy > 0.75 && d.curH < 170;
+    const closeByPos = d.curH < DRAWER_MIN_OPEN || (!d.wasOpen && d.curH < 64);
+    if (closeByPos || closeByFlick) {
       setMobileDrawer(false);
+    } else if (meta.mobileTab === 'content' && d.curH >= d.maxH - 24) {
+      setMobileDrawer(true, null);
+    } else {
+      setMobileDrawer(true, Math.round(d.curH));
     }
   };
   els.drawerBar.addEventListener('pointerup', endDrawerDrag);
   els.drawerBar.addEventListener('pointercancel', endDrawerDrag);
   els.drawerCollapseBtn.addEventListener('click', (e) => {
-    if (e.detail === 0) setMobileDrawer(false);
+    if (e.detail === 0) setMobileDrawer(!mobileUI.drawerOpen, null);
   });
 
   // 内容编辑
@@ -1580,6 +1684,19 @@ function canvasToBlob(canvas) {
   });
 }
 
+function blobToDataUrl(blob) {
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    } catch {
+      resolve('');
+    }
+  });
+}
+
 function revokeExport() {
   if (exp.url) URL.revokeObjectURL(exp.url);
   exp.url = '';
@@ -1650,12 +1767,17 @@ async function generateExport() {
     if (token !== exp.token) return;
     if (!blob) throw new Error('toBlob returned null');
 
+    // Data URL allows Android in-app WebViews (Bilibili/QQ/WeChat) to save on long-press
+    // without failing on blob: URLs; keep blob: as fallback for huge 4K PNGs and <a download>.
+    const imgSrc = blob.size <= MAX_DATA_URL_BYTES ? await blobToDataUrl(blob) : '';
+    if (token !== exp.token) return;
+
     revokeExport();
     exp.blob = blob;
     exp.name = safeFileName(state.title);
     exp.url = URL.createObjectURL(blob);
     try { exp.file = new File([blob], exp.name, { type: 'image/png' }); } catch { exp.file = null; }
-    els.exportImg.src = exp.url;
+    els.exportImg.src = imgSrc || exp.url;
     els.exportInfo.textContent = `PNG · ${res.pixelWidth} × ${res.pixelHeight}`;
     setExportBusy(false);
   } catch (err) {
@@ -1801,7 +1923,7 @@ let resetTimer = 0;
 function disarmReset() {
   clearTimeout(resetTimer);
   resetArmed = false;
-  els.resetBtn.textContent = '重新开始';
+  els.resetBtn.textContent = '清除所有';
   els.resetBtn.classList.remove('confirm');
 }
 
@@ -1823,6 +1945,7 @@ async function resetAll() {
   replaceState(defaultState());
   Object.assign(meta, defaultMeta());
   mobileUI.drawerOpen = true;
+  mobileUI.drawerHeight = null;
   removeUserFont();
   assets.cover = defaults.cover;
   setAnalysis(defaults.analysis);
@@ -1971,9 +2094,12 @@ if (new URLSearchParams(location.search).has('test')) {
     state,
     assets,
     meta,
+    mobileUI,
     ready,
     selectMobileTab,
     setMobileDrawer,
+    openExport,
+    closeExport,
     loadCoverBlob: (blob) => loadCoverBlob(blob, { user: true, persist: false }),
     rerender: () => renderPreview(),
   };
